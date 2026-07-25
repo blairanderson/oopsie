@@ -85,6 +85,20 @@ class Api::V1::ExceptionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal true, json["is_new_group"]
   end
 
+  test "disabled project rejects ingest without creating records" do
+    @project.disable!
+
+    assert_no_difference [ "ErrorGroup.count", "Occurrence.count" ] do
+      post api_v1_exceptions_url, params: @valid_payload.to_json, headers: @headers
+    end
+
+    assert_response :forbidden
+    json = JSON.parse(response.body)
+    assert_equal "Project is disabled and cannot accept new exceptions", json["error"]
+    assert_equal @project.id, json.dig("project", "id")
+    assert_equal "disabled", json.dig("project", "status")
+  end
+
   test "groups duplicate exceptions into same error group" do
     post api_v1_exceptions_url, params: @valid_payload.to_json, headers: @headers
     assert_response :created

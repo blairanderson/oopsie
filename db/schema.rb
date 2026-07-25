@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_05_25_192500) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_25_062300) do
   create_table "error_group_notes", force: :cascade do |t|
     t.string "actor_kind", default: "system", null: false
     t.string "actor_label", default: "system", null: false
@@ -78,9 +78,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_25_192500) do
   create_table "projects", force: :cascade do |t|
     t.string "api_key", null: false
     t.datetime "created_at", null: false
+    t.datetime "disabled_at"
     t.string "name", null: false
+    t.integer "status", default: 0, null: false
     t.datetime "updated_at", null: false
     t.index ["api_key"], name: "index_projects_on_api_key", unique: true
+    t.index ["name"], name: "index_projects_on_name", unique: true
+    t.index ["status"], name: "index_projects_on_status"
   end
 
   create_table "sessions", force: :cascade do |t|

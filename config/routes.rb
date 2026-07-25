@@ -32,6 +32,10 @@ Rails.application.routes.draw do
     namespace :v1 do
       resources :exceptions, only: [ :create ]
       resource :project, only: [ :show ]
+      post "projects", to: "projects#create"
+      patch "projects/:id", to: "projects#update", as: :project_admin
+      patch "projects/:id/disable", to: "projects#disable", as: :disable_project_admin
+      patch "projects/:id/enable", to: "projects#enable", as: :enable_project_admin
       resources :notification_rules, only: [ :index, :create ]
       resources :error_groups, only: [ :index, :show ] do
         member do

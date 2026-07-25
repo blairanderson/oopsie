@@ -2,7 +2,7 @@
 # oopsie — command-line client for the Oopsie exception tracker
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.5.0"
 CONFIG_DIR="${OOPSIE_CONFIG_DIR:-$HOME/.oopsie}"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
@@ -65,6 +65,27 @@ resolve_connection() {
     else empty end' )
 }
 
+api_error_message() {
+  local body="$1" fallback="$2" message
+  message=$(printf '%s' "$body" | jq -r '
+    if type == "object" and (.error // empty) != "" then
+      if (.details | type) == "array" and (.details | length) > 0 then
+        "\(.error): \(.details | join(", "))"
+      else
+        .error
+      end
+    else
+      empty
+    end
+  ' 2>/dev/null || true)
+
+  if [ -n "$message" ] && [ "$message" != "null" ]; then
+    echo "$message"
+  else
+    echo "$fallback"
+  fi
+}
+
 # api METHOD PATH [query=val ...]
 # Sends X-Project-Id header when SCOPED_PROJECT_ID is set.
 api() {
@@ -107,15 +128,17 @@ api() {
   case "$http_code" in
     2*) echo "$body" ;;
     400)
-      err=$(echo "$body" | jq -r '.error // "Bad request"' 2>/dev/null || echo "Bad request")
+      err=$(api_error_message "$body" "Bad request")
       if [[ "$err" == *"Project context required"* ]]; then
         die "No project scoped. Use '--project <name>' or 'oopsie config set-project <name>'."
       fi
       die "$err"
       ;;
     401) die "Invalid API key. Run 'oopsie whoami' to check." ;;
-    403) die "Forbidden. Your key doesn't have access to that project." ;;
-    404) die "Not found." ;;
+    403) die "$(api_error_message "$body" "Forbidden. Your key doesn't have access to that project.")" ;;
+    404) die "$(api_error_message "$body" "Not found.")" ;;
+    409) die "$(api_error_message "$body" "Conflict.")" ;;
+    422) die "$(api_error_message "$body" "Unprocessable Entity.")" ;;
     429) die "Rate limit exceeded. Try again in a minute." ;;
     *)   die "Server returned HTTP $http_code: $body" ;;
   esac
@@ -129,7 +152,7 @@ api_json() {
   api "$method" "$path" "$@"
 }
 
-# Fetch accessible projects as TSV (id, name, unresolved, total, created).
+# Fetch accessible projects as TSV (id, name, unresolved, total, created, status, accepts_ingest, disabled_at).
 # Temporarily clears X-Project-Id to get the full list.
 fetch_projects_tsv() {
   local saved="${SCOPED_PROJECT_ID:-}"
@@ -139,21 +162,24 @@ fetch_projects_tsv() {
   SCOPED_PROJECT_ID="$saved"
 
   if echo "$data" | jq -e '.projects' >/dev/null 2>&1; then
-    echo "$data" | jq -r '.projects[] | [.id, .name, .unresolved_count, .error_groups_count, .created_at] | @tsv'
+    echo "$data" | jq -r '.projects[] | [.id, .name, .unresolved_count, .error_groups_count, .created_at, (.status // "active"), (if has("accepts_ingest") then .accepts_ingest else true end), (.disabled_at // "")] | @tsv'
   else
-    echo "$data" | jq -r '[.id, .name, .unresolved_count, .error_groups_count, .created_at] | @tsv'
+    echo "$data" | jq -r '[.id, .name, .unresolved_count, .error_groups_count, .created_at, (.status // "active"), (if has("accepts_ingest") then .accepts_ingest else true end), (.disabled_at // "")] | @tsv'
   fi
 }
 
-# Resolve a --project argument (numeric id OR name) to a numeric id.
+# Resolve a project argument (numeric id OR name) to a numeric id.
 resolve_project_id_or_die() {
   local input="$1"
   if [[ "$input" =~ ^[0-9]+$ ]]; then
     echo "$input"; return
   fi
-  local id
-  id=$(fetch_projects_tsv | awk -F'\t' -v n="$input" '$2==n {print $1; exit}')
-  [ -z "$id" ] && die "Project '$input' not accessible on ${CONNECTION_SERVER}. Run 'oopsie projects'."
+  local matches count id
+  matches=$(fetch_projects_tsv | awk -F'\t' -v n="$input" '$2==n {print $1}')
+  count=$(printf '%s\n' "$matches" | grep -c . || true)
+  [ "$count" -eq 0 ] && die "Project '$input' not accessible on ${CONNECTION_SERVER}. Run 'oopsie projects'."
+  [ "$count" -gt 1 ] && die "Project name '$input' is ambiguous. Run 'oopsie projects' and use a project id."
+  id=$(printf '%s\n' "$matches" | head -1)
   echo "$id"
 }
 
@@ -220,6 +246,21 @@ workflow_badge() {
     blocked)          echo "[BLOCKED]" ;;
     ready_to_resolve) echo "[READY TO RESOLVE]" ;;
     *)                echo "[$(echo "$1" | tr '[:lower:]' '[:upper:]')]" ;;
+  esac
+}
+
+project_status_badge() {
+  case "$1" in
+    active)   echo "[ACTIVE]" ;;
+    disabled) echo "[DISABLED]" ;;
+    *)        echo "[$(echo "$1" | tr '[:lower:]' '[:upper:]')]" ;;
+  esac
+}
+
+yes_no() {
+  case "$1" in
+    true) echo "yes" ;;
+    *)    echo "no" ;;
   esac
 }
 
@@ -511,16 +552,16 @@ cmd_projects() {
 
   echo "PROJECTS ($n)"
   echo ""
-  printf "  %-25s  %10s  %7s  %5s\n" "NAME" "UNRESOLVED" "TOTAL" "ID"
+  printf "  %-25s  %-10s  %10s  %7s  %5s\n" "NAME" "STATUS" "UNRESOLVED" "TOTAL" "ID"
   local had_marker=0
-  while IFS=$'\t' read -r id name unresolved total created; do
+  while IFS=$'\t' read -r id name unresolved total created status accepts_ingest disabled_at; do
     local marker=""
     if [ -n "${CONNECTION_PROJECT_ID:-}" ] && [ "$id" = "$CONNECTION_PROJECT_ID" ]; then
       marker="  *"; had_marker=1
     elif [ -z "${CONNECTION_PROJECT_ID:-}" ] && [ -n "${CONNECTION_PROJECT_NAME:-}" ] && [ "$name" = "$CONNECTION_PROJECT_NAME" ]; then
       marker="  *"; had_marker=1
     fi
-    printf "  %-25s  %10s  %7s  %5s%s\n" "$name" "$unresolved" "$total" "$id" "$marker"
+    printf "  %-25s  %-10s  %10s  %7s  %5s%s\n" "$name" "$(project_status_badge "$status")" "$unresolved" "$total" "$id" "$marker"
   done <<< "$rows"
   if [ "$had_marker" = "1" ]; then
     echo ""
@@ -530,7 +571,119 @@ cmd_projects() {
 
 # ── Project / errors commands ───────────────────────────────────────────
 
+print_project_admin_response() {
+  local action="$1" data="$2"
+  local project id name status accepts_ingest disabled_at api_key
+  project=$(echo "$data" | jq '.project')
+  id=$(echo "$project" | jq -r '.id')
+  name=$(echo "$project" | jq -r '.name')
+  status=$(echo "$project" | jq -r '.status // "active"')
+  accepts_ingest=$(echo "$project" | jq -r 'if has("accepts_ingest") then .accepts_ingest else true end')
+  disabled_at=$(echo "$project" | jq -r '.disabled_at // empty')
+  api_key=$(echo "$project" | jq -r '.api_key // empty')
+
+  echo "${action} project #${id}."
+  echo "  Name:            ${name}"
+  echo "  Status:          $(project_status_badge "$status")"
+  echo "  Accepts ingest:  $(yes_no "$accepts_ingest")"
+  [ -n "$disabled_at" ] && echo "  Disabled at:     ${disabled_at}"
+  if [ -n "$api_key" ]; then
+    echo "  Project key:     ${api_key}"
+    echo ""
+    echo "Use this project key in client apps that report exceptions:"
+    echo "  OOPSIE_API_KEY=${api_key}"
+  fi
+}
+
+cmd_project_create() {
+  local name="${1:-}" if_missing=false
+  [ -z "$name" ] && die "Usage: oopsie project create <name> [--if-missing]"
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --if-missing) if_missing=true; shift ;;
+      -*)           die "Unknown flag: $1. Run 'oopsie help'." ;;
+      *)            die "Unexpected argument: $1. Run 'oopsie help'." ;;
+    esac
+  done
+
+  local body data created action
+  body=$(jq -n --arg name "$name" --argjson if_missing "$if_missing" '{project: {name: $name}, if_missing: $if_missing}')
+
+  resolve_connection
+  SCOPED_PROJECT_ID=""
+  data=$(api_json POST /api/v1/projects "$body")
+  created=$(echo "$data" | jq -r '.created // true')
+  if [ "$created" = "true" ]; then
+    action="Created"
+  else
+    action="Using existing"
+  fi
+  print_project_admin_response "$action" "$data"
+}
+
+cmd_project_update() {
+  local target="${1:-}" name=""
+  [ -z "$target" ] && die "Usage: oopsie project update <project> --name <new-name>"
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name)
+        [ $# -ge 2 ] || die "Missing value for --name."
+        name="$2"; shift 2
+        ;;
+      -*) die "Unknown flag: $1. Run 'oopsie help'." ;;
+      *)  die "Unexpected argument: $1. Run 'oopsie help'." ;;
+    esac
+  done
+  [ -z "$name" ] && die "Usage: oopsie project update <project> --name <new-name>"
+
+  resolve_connection
+  SCOPED_PROJECT_ID=""
+  local project_id body data
+  project_id=$(resolve_project_id_or_die "$target")
+  body=$(jq -n --arg name "$name" '{project: {name: $name}}')
+  data=$(api_json PATCH "/api/v1/projects/$project_id" "$body")
+  print_project_admin_response "Updated" "$data"
+}
+
+cmd_project_disable() {
+  local target="${1:-}"
+  [ -z "$target" ] && die "Usage: oopsie project disable <project>"
+
+  resolve_connection
+  SCOPED_PROJECT_ID=""
+  local project_id data
+  project_id=$(resolve_project_id_or_die "$target")
+  data=$(api PATCH "/api/v1/projects/$project_id/disable")
+  print_project_admin_response "Disabled" "$data"
+}
+
+cmd_project_enable() {
+  local target="${1:-}"
+  [ -z "$target" ] && die "Usage: oopsie project enable <project>"
+
+  resolve_connection
+  SCOPED_PROJECT_ID=""
+  local project_id data
+  project_id=$(resolve_project_id_or_die "$target")
+  data=$(api PATCH "/api/v1/projects/$project_id/enable")
+  print_project_admin_response "Enabled" "$data"
+}
+
 cmd_project() {
+  local sub="${1:-}"
+  case "$sub" in
+    create)  shift; cmd_project_create "$@"; return ;;
+    update)  shift; cmd_project_update "$@"; return ;;
+    disable) shift; cmd_project_disable "$@"; return ;;
+    enable)  shift; cmd_project_enable "$@"; return ;;
+    ""|show) ;;
+    -*) die "Unknown flag: $sub. Run 'oopsie help'." ;;
+    *)  die "Unknown project command: $sub. Run 'oopsie help'." ;;
+  esac
+  [ "$sub" = "show" ] && shift
+
   resolve_connection
   SCOPED_PROJECT_ID=""
   local data
@@ -551,15 +704,32 @@ cmd_project() {
     fi
     # Match by exact id first (unambiguous), then by name (may match multiple).
     proj_json=$(echo "$data" | jq --arg n "$want" 'first(.projects[] | select((.id | tostring) == $n))')
-    [ -z "$proj_json" ] || [ "$proj_json" = "null" ] && \
-      proj_json=$(echo "$data" | jq --arg n "$want" 'first(.projects[] | select(.name == $n))')
+    if [ -z "$proj_json" ] || [ "$proj_json" = "null" ]; then
+      local matches
+      matches=$(echo "$data" | jq --arg n "$want" '[.projects[] | select(.name == $n)]')
+      case "$(echo "$matches" | jq 'length')" in
+        0) proj_json="null" ;;
+        1) proj_json=$(echo "$matches" | jq '.[0]') ;;
+        *) die "Project name '$want' is ambiguous. Run 'oopsie projects' and use a project id." ;;
+      esac
+    fi
     [ -z "$proj_json" ] || [ "$proj_json" = "null" ] && \
       die "Project '$want' not accessible. Run 'oopsie projects'."
   else
     proj_json="$data"
   fi
 
+  local project_status project_accepts_ingest project_disabled_at
+  project_status=$(echo "$proj_json" | jq -r '.status // "active"')
+  project_accepts_ingest=$(echo "$proj_json" | jq -r 'if has("accepts_ingest") then .accepts_ingest else true end')
+  project_disabled_at=$(echo "$proj_json" | jq -r '.disabled_at // empty')
+
   echo "Project: $(echo "$proj_json" | jq -r '.name')"
+  echo "  Status:        $(project_status_badge "$project_status")"
+  echo "  Accepts ingest: $(yes_no "$project_accepts_ingest")"
+  if [ -n "$project_disabled_at" ]; then
+    echo "  Disabled at:   ${project_disabled_at}"
+  fi
   echo "  Error groups:  $(echo "$proj_json" | jq -r '.error_groups_count')"
   echo "  Unresolved:    $(echo "$proj_json" | jq -r '.unresolved_count')"
   echo "  Created:       $(echo "$proj_json" | jq -r '.created_at')"
@@ -912,6 +1082,14 @@ Info:
   oopsie projects                              List projects you can access
   oopsie project                               Summary of the active project
 
+Project administration (User API key required):
+  oopsie project create <name> [--if-missing]  Create a project and print its project key
+                                                Names are unique; --if-missing reuses one exact match
+  oopsie project update <project> --name <name>
+                                                Rename a project by id or unambiguous name
+  oopsie project disable <project>              Disable exception ingest for a project
+  oopsie project enable <project>               Re-enable exception ingest for a project
+
 Errors:
   oopsie errors [--status unresolved|resolved|ignored] [--workflow-state untriaged|looking|in_progress|blocked|ready_to_resolve] [--limit N] [--offset N]
   oopsie show <id>                             Full details + recent occurrences
@@ -937,8 +1115,9 @@ Global flags:
   -v, --version                                Show version
 
 Auth modes:
-  Project key — scoped to one project. No --project needed.
-  User key    — cross-project. Pass --project or pin one with 'config set-project'.
+  Project key — scoped to one project. Reports exceptions and manages that project's errors.
+  User key    — cross-project. Lists projects and can create, rename, disable, and enable projects.
+                Use the project key printed by 'project create' in client apps.
 
 Config: ${CONFIG_DIR}/config.json  (override with \$OOPSIE_CONFIG_DIR)
 EOF
@@ -978,7 +1157,7 @@ case "$command" in
   config)               cmd_config "$@" ;;
   whoami)               cmd_whoami ;;
   projects)             cmd_projects ;;
-  project)              cmd_project ;;
+  project)              cmd_project "$@" ;;
   errors)               cmd_errors "$@" ;;
   show)                 cmd_show "$@" ;;
   state)                cmd_state "$@" ;;

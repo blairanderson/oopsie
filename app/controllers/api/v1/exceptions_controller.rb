@@ -2,6 +2,7 @@ module Api
   module V1
     class ExceptionsController < BaseController
       before_action :require_project!
+      before_action :require_project_accepts_ingest!
       before_action :validate_payload!
 
       rescue_from ActiveRecord::RecordInvalid do |e|

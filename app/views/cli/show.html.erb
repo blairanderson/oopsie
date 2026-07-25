@@ -40,6 +40,10 @@ sudo mv oopsie /usr/local/bin/  # optional: add to PATH</code></pre>
       <tr><td><code>oopsie whoami</code></td><td>Show current connection, auth type, and project access</td></tr>
       <tr><td><code>oopsie projects</code></td><td>List all projects you can access (user key) or the one project (project key)</td></tr>
       <tr><td><code>oopsie project</code></td><td>Summary of the active project (pinned or <code>--project</code>)</td></tr>
+      <tr><td><code>oopsie project create "New App" --if-missing</code></td><td>Create a uniquely named project with a user key, or reuse one exact match, and print the project key for client apps</td></tr>
+      <tr><td><code>oopsie project update &lt;id&gt; --name "Renamed App"</code></td><td>Rename a project with a user key</td></tr>
+      <tr><td><code>oopsie project disable &lt;id&gt;</code></td><td>Disable new exception ingest while keeping historical errors browsable</td></tr>
+      <tr><td><code>oopsie project enable &lt;id&gt;</code></td><td>Re-enable exception ingest for a disabled project</td></tr>
       <tr><td><code>oopsie errors</code></td><td>List error groups for the active project</td></tr>
       <tr><td><code>oopsie errors --status resolved</code></td><td>Filter by status (unresolved/resolved/ignored)</td></tr>
       <tr><td><code>oopsie errors --workflow-state blocked</code></td><td>Filter by agent workflow state</td></tr>
@@ -90,6 +94,10 @@ oopsie config list</code></pre>
     </thead>
     <tbody>
       <tr><td><code>GET</code></td><td><code>/api/v1/project</code></td><td>One project (project key) or all accessible projects (user key)</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/projects</code></td><td>Create a project with a user key and return its project key</td></tr>
+      <tr><td><code>PATCH</code></td><td><code>/api/v1/projects/:id</code></td><td>Rename a project with a user key</td></tr>
+      <tr><td><code>PATCH</code></td><td><code>/api/v1/projects/:id/disable</code></td><td>Disable new exception ingest for a project</td></tr>
+      <tr><td><code>PATCH</code></td><td><code>/api/v1/projects/:id/enable</code></td><td>Re-enable exception ingest for a project</td></tr>
       <tr><td><code>GET</code></td><td><code>/api/v1/error_groups</code></td><td>List error groups (?status=, ?workflow_state=, ?limit=, ?offset=)</td></tr>
       <tr><td><code>GET</code></td><td><code>/api/v1/error_groups/:id</code></td><td>Error group details + occurrences + activity</td></tr>
       <tr><td><code>PATCH</code></td><td><code>/api/v1/error_groups/:id/workflow_state</code></td><td>Set workflow state with optional note</td></tr>
@@ -99,7 +107,7 @@ oopsie config list</code></pre>
       <tr><td><code>PATCH</code></td><td><code>/api/v1/error_groups/:id/unresolve</code></td><td>Reopen</td></tr>
     </tbody>
   </table>
-  <p class="text-secondary">All endpoints require <code>Authorization: Bearer YOUR_KEY</code>. When calling project-scoped endpoints with a User API Key, include <code>project_id</code> as a query param or <code>X-Project-Id</code> as a header.</p>
+  <p class="text-secondary">All endpoints require <code>Authorization: Bearer YOUR_KEY</code>. Project keys can report exceptions and manage error groups for one project. User keys can list, create, rename, disable, and enable projects. When calling project-scoped endpoints with a User API Key, include <code>project_id</code> as a query param or <code>X-Project-Id</code> as a header.</p>
 </div>
 
 <div class="cli-section card">

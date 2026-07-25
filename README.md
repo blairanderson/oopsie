@@ -52,7 +52,9 @@ Oopsie has two kinds of API keys:
 
 Both authenticate via `Authorization: Bearer <key>`. When you use a user key on a
 project-scoped endpoint, pass the project as a `project_id` query param or
-`X-Project-Id` header. Keys can be rotated from the UI — old keys invalidate immediately.
+`X-Project-Id` header. User keys can also create, rename, disable, and re-enable
+projects through the API and CLI. Project keys cannot administer projects, even
+their own. Keys can be rotated from the UI — old keys invalidate immediately.
 
 ## Client Integration
 
@@ -91,6 +93,12 @@ oopsie state 42 looking --note "Checking recent deploys"
 oopsie note 42 --body "Reproduced locally with account 123"
 oopsie resolve 42                 # mark fixed
 
+# Project admin (user key required)
+oopsie project create "New App" --if-missing
+oopsie project update 42 --name "Renamed App"
+oopsie project disable 42         # stop new exception ingest
+oopsie project enable 42          # resume exception ingest
+
 # Notification rules
 oopsie notifications --project myapp
 printf '%s' "$OOPSIE_WEBHOOK_URL" | \
@@ -104,6 +112,7 @@ Override the scope for any command with `-p/--project <name>` or the connection 
 ### POST /api/v1/exceptions
 
 Report an exception. Accepts a **project key** or a **user key** (with project context).
+Disabled projects return `403` and do not create error groups or occurrences.
 
 **Headers:**
 
@@ -169,8 +178,41 @@ When using a user key, also pass `X-Project-Id: <id>` or `?project_id=<id>`.
 |--------|---------|
 | 400 | User key used without project context — pass `project_id` or `X-Project-Id` |
 | 401 | Invalid or missing API key |
+| 403 | Project is disabled and cannot accept new exceptions |
 | 422 | Malformed payload (missing `error` or `error.class_name`) |
 | 429 | Rate limit exceeded (100 requests/minute per key) |
+
+### Project administration
+
+Project administration requires a **user key**. The response to project creation
+includes the new project's project key so an agent can immediately configure a
+client app without visiting the web UI. Project names are unique; pass
+`if_missing: true` when setup scripts should reuse one existing project with the
+same name instead of failing with `409 Conflict`.
+
+```bash
+curl -X POST https://your-oopsie.com/api/v1/projects \
+  -H 'Authorization: Bearer YOUR_USER_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"project":{"name":"New App"},"if_missing":true}'
+```
+
+```json
+{
+  "project": {
+    "id": 42,
+    "name": "New App",
+    "status": "active",
+    "disabled_at": null,
+    "accepts_ingest": true,
+    "error_groups_count": 0,
+    "unresolved_count": 0,
+    "created_at": "2026-07-25T06:00:00Z",
+    "api_key": "project_key_for_client_apps"
+  },
+  "created": true
+}
+```
 
 ### Other endpoints
 
@@ -178,7 +220,11 @@ Authenticated with a Bearer token. Project-scoped endpoints need a project conte
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/api/v1/project` | Project summary — single project with a project key, `{projects: [...]}` with a user key |
+| `GET`    | `/api/v1/project` | Project summary with `status`, `disabled_at`, and `accepts_ingest` — single project with a project key, `{projects: [...]}` with a user key |
+| `POST`   | `/api/v1/projects` | Create a project with a user key (`project.name`, optional `if_missing`) and return its project key |
+| `PATCH`  | `/api/v1/projects/:id` | Rename a project with a user key (`project.name`) |
+| `PATCH`  | `/api/v1/projects/:id/disable` | Disable new exception ingest for a project with a user key |
+| `PATCH`  | `/api/v1/projects/:id/enable` | Re-enable exception ingest for a project with a user key |
 | `GET`    | `/api/v1/notification_rules` | List notification destinations for the scoped project |
 | `POST`   | `/api/v1/notification_rules` | Create a notification rule (`channel`, `destination`, optional `events`) |
 | `GET`    | `/api/v1/error_groups` | List error groups (`?status=`, `?limit=`, `?offset=`) |

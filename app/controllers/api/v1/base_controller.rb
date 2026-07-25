@@ -31,6 +31,12 @@ module Api
         @user
       end
 
+      def require_user_key!
+        return if @user
+
+        render json: { error: "User API key required" }, status: :forbidden
+      end
+
       def require_project!
         return if @project
 
@@ -42,6 +48,21 @@ module Api
         unless @project
           render json: { error: "Project context required. Pass project_id param or X-Project-Id header." }, status: :bad_request
         end
+      end
+
+      def require_project_accepts_ingest!
+        return if performed?
+        return if @project&.accepts_ingest?
+
+        render json: {
+          error: "Project is disabled and cannot accept new exceptions",
+          project: {
+            id: @project.id,
+            name: @project.name,
+            status: @project.status,
+            disabled_at: @project.disabled_at&.iso8601
+          }
+        }, status: :forbidden
       end
 
       def check_rate_limit!

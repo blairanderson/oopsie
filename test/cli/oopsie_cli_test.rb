@@ -46,7 +46,99 @@ class OopsieCliTest < ActiveSupport::TestCase
     assert_equal "in_progress", body["workflow_state"]
     assert_equal "Investigating cache miss.", body["note"]
     assert_includes headers_from(args), "X-Project-Id: 7"
-    assert_includes headers_from(args), "X-Oopsie-Client: cli/oopsie 0.4.0"
+    assert_includes headers_from(args), "X-Oopsie-Client: cli/oopsie 0.5.0"
+  end
+
+  test "projects command displays project status" do
+    stdout, stderr, status = run_cli("projects")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "PROJECTS"
+    assert_includes stdout, "MyApp"
+    assert_includes stdout, "[ACTIVE]"
+    assert_includes stdout, "PausedApp"
+    assert_includes stdout, "[DISABLED]"
+  end
+
+  test "help documents project administration permissions" do
+    stdout, stderr, status = run_cli("help")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Project administration (User API key required)"
+    assert_includes stdout, "oopsie project create <name> [--if-missing]"
+    assert_includes stdout, "oopsie project disable <project>"
+    assert_includes stdout, "User key"
+    assert_includes stdout, "create, rename, disable, and enable projects"
+  end
+
+  test "project create posts name and if missing flag and prints project key" do
+    stdout, stderr, status = run_cli("project", "create", "Agent App", "--if-missing")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Created project #9."
+    assert_includes stdout, "Project key:     project-key-new"
+    assert_includes stdout, "OOPSIE_API_KEY=project-key-new"
+
+    args = curl_calls.last
+    body = JSON.parse(value_after(args, "-d"))
+
+    assert_equal "POST", value_after(args, "-X")
+    assert_equal "http://oopsie.test/api/v1/projects", args.last
+    assert_equal "Agent App", body.dig("project", "name")
+    assert_equal true, body["if_missing"]
+  end
+
+  test "project update patches new name" do
+    stdout, stderr, status = run_cli("project", "update", "7", "--name", "Renamed App")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Updated project #7."
+    assert_includes stdout, "Renamed App"
+
+    args = curl_calls.last
+    body = JSON.parse(value_after(args, "-d"))
+
+    assert_equal "PATCH", value_after(args, "-X")
+    assert_equal "http://oopsie.test/api/v1/projects/7", args.last
+    assert_equal "Renamed App", body.dig("project", "name")
+  end
+
+  test "project disable and enable patch project admin endpoints" do
+    stdout, stderr, status = run_cli("project", "disable", "7")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Disabled project #7."
+    assert_includes stdout, "[DISABLED]"
+    assert_includes stdout, "Accepts ingest:  no"
+    assert_equal "PATCH", value_after(curl_calls.last, "-X")
+    assert_equal "http://oopsie.test/api/v1/projects/7/disable", curl_calls.last.last
+
+    stdout, stderr, status = run_cli("project", "enable", "7")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Enabled project #7."
+    assert_includes stdout, "[ACTIVE]"
+    assert_includes stdout, "Accepts ingest:  yes"
+    assert_equal "PATCH", value_after(curl_calls.last, "-X")
+    assert_equal "http://oopsie.test/api/v1/projects/7/enable", curl_calls.last.last
+  end
+
+  test "project admin command surfaces server forbidden error" do
+    stdout, stderr, status = run_cli("project", "create", "Forbidden")
+
+    assert_not status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_empty stdout
+    assert_includes stderr, "User API key required"
+  end
+
+  test "project name resolution rejects ambiguous names" do
+    stdout, stderr, status = run_cli("project", "disable", "DupApp")
+
+    assert_not status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_empty stdout
+    assert_includes stderr, "Project name 'DupApp' is ambiguous"
+    assert_equal "GET", value_after(curl_calls.last, "-X")
+    assert_equal "http://oopsie.test/api/v1/project", curl_calls.last.last
   end
 
   test "note command posts plain note body" do
@@ -120,9 +212,115 @@ class OopsieCliTest < ActiveSupport::TestCase
 
       method = ARGV[ARGV.index("-X") + 1]
       url = ARGV.last
+      request_body = if ARGV.include?("-d")
+        JSON.parse(ARGV[ARGV.index("-d") + 1])
+      else
+        {}
+      end
 
       response =
-        if method == "GET" && url.include?("/api/v1/error_groups?")
+        if method == "POST" && url.end_with?("/api/v1/projects") && request_body.dig("project", "name") == "Forbidden"
+          puts JSON.generate({ error: "User API key required" })
+          puts "403"
+          exit
+        elsif method == "GET" && url.end_with?("/api/v1/project")
+          {
+            projects: [
+              {
+                id: 7,
+                name: "MyApp",
+                status: "active",
+                disabled_at: nil,
+                accepts_ingest: true,
+                unresolved_count: 2,
+                error_groups_count: 5,
+                created_at: "2026-05-25T18:00:00Z"
+              },
+              {
+                id: 8,
+                name: "PausedApp",
+                status: "disabled",
+                disabled_at: "2026-07-25T06:00:00Z",
+                accepts_ingest: false,
+                unresolved_count: 0,
+                error_groups_count: 1,
+                created_at: "2026-05-25T18:00:00Z"
+              },
+              {
+                id: 10,
+                name: "DupApp",
+                status: "active",
+                accepts_ingest: true,
+                unresolved_count: 0,
+                error_groups_count: 0,
+                created_at: "2026-05-25T18:00:00Z"
+              },
+              {
+                id: 11,
+                name: "DupApp",
+                status: "active",
+                accepts_ingest: true,
+                unresolved_count: 0,
+                error_groups_count: 0,
+                created_at: "2026-05-25T18:00:00Z"
+              }
+            ]
+          }
+        elsif method == "POST" && url.end_with?("/api/v1/projects")
+          {
+            project: {
+              id: 9,
+              name: request_body.dig("project", "name"),
+              status: "active",
+              disabled_at: nil,
+              accepts_ingest: true,
+              error_groups_count: 0,
+              unresolved_count: 0,
+              created_at: "2026-07-25T06:00:00Z",
+              api_key: "project-key-new"
+            },
+            created: true
+          }
+        elsif method == "PATCH" && url.end_with?("/api/v1/projects/7")
+          {
+            project: {
+              id: 7,
+              name: request_body.dig("project", "name"),
+              status: "active",
+              disabled_at: nil,
+              accepts_ingest: true,
+              error_groups_count: 5,
+              unresolved_count: 2,
+              created_at: "2026-05-25T18:00:00Z"
+            }
+          }
+        elsif method == "PATCH" && url.end_with?("/api/v1/projects/7/disable")
+          {
+            project: {
+              id: 7,
+              name: "MyApp",
+              status: "disabled",
+              disabled_at: "2026-07-25T06:00:00Z",
+              accepts_ingest: false,
+              error_groups_count: 5,
+              unresolved_count: 2,
+              created_at: "2026-05-25T18:00:00Z"
+            }
+          }
+        elsif method == "PATCH" && url.end_with?("/api/v1/projects/7/enable")
+          {
+            project: {
+              id: 7,
+              name: "MyApp",
+              status: "active",
+              disabled_at: nil,
+              accepts_ingest: true,
+              error_groups_count: 5,
+              unresolved_count: 2,
+              created_at: "2026-05-25T18:00:00Z"
+            }
+          }
+        elsif method == "GET" && url.include?("/api/v1/error_groups?")
           {
             error_groups: [
               {
