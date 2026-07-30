@@ -373,12 +373,13 @@ fly secrets set OOPSIE_ADMIN_PASSWORD=your-secure-password
 fly deploy
 ```
 
-### Any VPS (Ubuntu)
+### Any VPS (Ubuntu 24.04+)
 
 ```bash
-# Install Ruby 4.0.2, bundler, and SQLite
+# Install Ruby 4.0.2, bundler, SQLite, and libvips 8.13+
 git clone https://github.com/theinventor/Oopsie.git
 cd Oopsie
+sudo apt-get update && sudo apt-get install --no-install-recommends -y libvips-dev libvips-tools sqlite3
 bundle install --without development test
 RAILS_ENV=production bin/rails db:prepare
 RAILS_ENV=production bin/rails db:seed

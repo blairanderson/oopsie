@@ -2,6 +2,13 @@
 
 All notable changes to Oopsie will be documented in this file.
 
+## [0.1.4.1] - 2026-07-30
+
+### Fixed
+- Active Storage variants now bundle the Ruby libvips binding and install explicit libvips system packages in Docker and CI.
+- Rails is patched to 8.1.3.1 so Active Storage variant processing no longer trips the current security audit.
+- Self-hosted setup docs now include the libvips packages needed for image processing.
+
 ## [0.1.4.0] - 2026-05-25
 
 ### Added
