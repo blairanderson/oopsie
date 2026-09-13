@@ -5,17 +5,22 @@ class NotificationRule < ApplicationRecord
     "error.reopened" => "regression",
     "error.regressed" => "regression"
   }.freeze
+  HTTP_HEADER_NAME = /\A[a-zA-Z0-9!#$%&'*+\-.^_`|~]+\z/
 
   belongs_to :project
+
+  attr_accessor :webhook_header_name, :webhook_header_value
 
   enum :channel, { email: 0, webhook: 1 }
 
   validates :channel, presence: true
   validates :destination, presence: true
   validate :destination_is_valid_url, if: -> { webhook? && destination.present? }
+  validate :webhook_headers_are_valid, if: :webhook?
   validate :events_are_supported
 
   before_validation :normalize_events
+  before_validation :apply_webhook_header_fields
 
   def self.canonical_event(event)
     value = event.to_s.strip
@@ -38,10 +43,63 @@ class NotificationRule < ApplicationRecord
     events.include?(self.class.canonical_event(event))
   end
 
+  def webhook_headers
+    value = self[:webhook_headers]
+    value.is_a?(Hash) ? value.stringify_keys : (value.presence || {})
+  end
+
+  def webhook_headers=(value)
+    self[:webhook_headers] = if value.respond_to?(:to_h)
+      value.to_h.each_with_object({}) do |(name, header_value), headers|
+        headers[name.to_s.strip] = header_value.is_a?(String) ? header_value.strip : header_value
+      end
+    else
+      value
+    end
+  end
+
+  def webhook_header_name
+    @webhook_header_name ||= webhook_headers.keys.first
+  end
+
+  def webhook_header_value
+    @webhook_header_value ||= webhook_headers.values.first
+  end
+
   private
 
   def normalize_events
     self.events = events
+  end
+
+  def apply_webhook_header_fields
+    return if @webhook_header_name.nil? && @webhook_header_value.nil?
+
+    name = webhook_header_name.to_s.strip
+    value = webhook_header_value.to_s.strip
+    self.webhook_headers = if name.blank? && value.blank?
+      {}
+    else
+      { name => value }
+    end
+  end
+
+  def webhook_headers_are_valid
+    headers = webhook_headers
+    unless headers.is_a?(Hash)
+      errors.add(:webhook_headers, "must be a map of valid HTTP headers")
+      return
+    end
+
+    headers.each do |name, value|
+      unless name.is_a?(String) && name.match?(HTTP_HEADER_NAME)
+        errors.add(:webhook_headers, "must use valid HTTP header names")
+      end
+
+      unless value.is_a?(String) && value.present? && value !~ /[\r\n]/
+        errors.add(:webhook_headers, "must use valid HTTP header values")
+      end
+    end
   end
 
   def events_are_supported

@@ -33,7 +33,10 @@ module Api
       private
 
       def notification_rule_params
-        params.require(:notification_rule).permit(:channel, :destination, :enabled, events: [])
+        permitted = params.require(:notification_rule).permit(:channel, :destination, :enabled, events: [], headers: {})
+        headers = permitted.delete(:headers)
+        permitted[:webhook_headers] = headers if headers
+        permitted
       end
 
       def serialize_rule(rule)
@@ -41,6 +44,7 @@ module Api
           id: rule.id,
           channel: rule.channel,
           destination_masked: masked_destination(rule),
+          headers_configured: rule.webhook? && rule.webhook_headers.present?,
           events: rule.events,
           enabled: rule.enabled,
           created_at: rule.created_at.iso8601,

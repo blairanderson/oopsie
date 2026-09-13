@@ -1,6 +1,24 @@
 require "test_helper"
 
 class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
+  class RecordingHttp
+    attr_reader :last_request
+
+    def use_ssl=(_value)
+    end
+
+    def open_timeout=(_value)
+    end
+
+    def read_timeout=(_value)
+    end
+
+    def request(request)
+      @last_request = request
+      Net::HTTPSuccess.new("1.1", "204", "No Content")
+    end
+  end
+
   setup do
     sign_in_as(users(:one))
     @project = projects(:myapp)
@@ -36,6 +54,22 @@ class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     end
     assert_redirected_to settings_project_path(@project)
     assert_equal "webhook", NotificationRule.last.channel
+  end
+
+  test "creates a webhook notification rule with an optional header" do
+    assert_difference "NotificationRule.count", 1 do
+      post project_notification_rules_url(@project), params: {
+        notification_rule: {
+          channel: "webhook",
+          destination: "https://hooks.example.com/test",
+          webhook_header_name: "Authorization",
+          webhook_header_value: "Bearer secret"
+        }
+      }
+    end
+
+    assert_redirected_to settings_project_path(@project)
+    assert_equal({ "Authorization" => "Bearer secret" }, NotificationRule.last.webhook_headers)
   end
 
   test "rejects blank destination" do
@@ -122,9 +156,38 @@ class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert flash[:alert].present?
   end
 
+  test "test_send delivers an optional webhook header" do
+    http = RecordingHttp.new
+    original_http_new = Net::HTTP.method(:new)
+    Net::HTTP.define_singleton_method(:new) { |*| http }
+
+    begin
+      post test_send_project_notification_rules_url(@project), params: {
+        notification_rule: {
+          channel: "webhook",
+          destination: "https://hooks.example.com/test",
+          webhook_header_name: "Authorization",
+          webhook_header_value: "Bearer secret"
+        }
+      }
+    ensure
+      Net::HTTP.define_singleton_method(:new, original_http_new)
+    end
+
+    assert_redirected_to settings_project_path(@project)
+    assert_equal "Bearer secret", http.last_request["Authorization"]
+  end
+
   test "form renders Send Test button" do
     get edit_project_notification_rule_url(@project, @rule)
     assert_response :success
     assert_select "button[formaction*='test_send']", text: /Send Test/
+  end
+
+  test "form renders optional webhook header fields" do
+    get edit_project_notification_rule_url(@project, @rule)
+    assert_response :success
+    assert_select "input[name='notification_rule[webhook_header_name]']"
+    assert_select "input[name='notification_rule[webhook_header_value]']"
   end
 end

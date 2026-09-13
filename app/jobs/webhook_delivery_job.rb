@@ -34,12 +34,12 @@ class WebhookDeliveryJob < ApplicationJob
       }
     }
 
-    deliver_webhook(rule.destination, payload)
+    deliver_webhook(rule.destination, payload, rule.webhook_headers)
   end
 
   private
 
-  def deliver_webhook(url, payload)
+  def deliver_webhook(url, payload, headers = {})
     uri = URI.parse(url)
     return unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
 
@@ -50,6 +50,7 @@ class WebhookDeliveryJob < ApplicationJob
 
     request = Net::HTTP::Post.new(uri.path.presence || "/")
     request["Content-Type"] = "application/json"
+    headers.each { |name, value| request[name] = value }
     request.body = payload.to_json
 
     response = http.request(request)

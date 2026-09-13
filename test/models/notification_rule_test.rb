@@ -20,6 +20,30 @@ class NotificationRuleTest < ActiveSupport::TestCase
     assert rule.valid?
   end
 
+  test "valid webhook rule with custom headers" do
+    rule = NotificationRule.new(
+      project: projects(:myapp),
+      channel: :webhook,
+      destination: "https://hooks.example.com/notify",
+      webhook_headers: { "Authorization" => "Bearer secret" }
+    )
+
+    assert rule.valid?
+    assert_equal({ "Authorization" => "Bearer secret" }, rule.webhook_headers)
+  end
+
+  test "rejects webhook headers with a newline" do
+    rule = NotificationRule.new(
+      project: projects(:myapp),
+      channel: :webhook,
+      destination: "https://hooks.example.com/notify",
+      webhook_headers: { "Authorization" => "Bearer secret\nX-Injected: true" }
+    )
+
+    assert_not rule.valid?
+    assert_match(/valid HTTP header/, rule.errors[:webhook_headers].join)
+  end
+
   test "defaults to all supported events" do
     rule = NotificationRule.create!(
       project: projects(:myapp),

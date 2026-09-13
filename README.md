@@ -226,7 +226,7 @@ Authenticated with a Bearer token. Project-scoped endpoints need a project conte
 | `PATCH`  | `/api/v1/projects/:id/disable` | Disable new exception ingest for a project with a user key |
 | `PATCH`  | `/api/v1/projects/:id/enable` | Re-enable exception ingest for a project with a user key |
 | `GET`    | `/api/v1/notification_rules` | List notification destinations for the scoped project |
-| `POST`   | `/api/v1/notification_rules` | Create a notification rule (`channel`, `destination`, optional `events`) |
+| `POST`   | `/api/v1/notification_rules` | Create a notification rule (`channel`, `destination`, optional `headers`, `events`) |
 | `GET`    | `/api/v1/error_groups` | List error groups (`?status=`, `?limit=`, `?offset=`) |
 | `GET`    | `/api/v1/error_groups/:id` | Group details + recent occurrences |
 | `PATCH`  | `/api/v1/error_groups/:id/workflow_state` | Set agent workflow state (`workflow_state`, optional `note`) |
@@ -325,7 +325,7 @@ Notifications do **not** fire on repeat occurrences of known unresolved errors (
 
 Channels:
 - **Email** — ActionMailer with error details, backtrace, and link to Oopsie UI
-- **Webhook** — POST JSON payload to any URL (Slack incoming webhooks, etc.)
+- **Webhook** — POST a JSON payload to any URL, with optional custom HTTP headers
 
 Configure notification rules per project in Settings.
 
@@ -342,6 +342,28 @@ printf '%s' "$OOPSIE_WEBHOOK_URL" | \
     --kind webhook \
     --url-stdin \
     --events error.created,error.reopened
+
+printf '%s' 'Authorization: Bearer <token>' | \
+  oopsie notification create \
+    --project myapp \
+    --kind webhook \
+    --url https://example.com/webhook \
+    --header-stdin
+```
+
+The API accepts custom headers as a JSON object. Oopsie sends them with every
+webhook request and reports only `headers_configured` when a rule is listed:
+
+```json
+{
+  "notification_rule": {
+    "channel": "webhook",
+    "destination": "https://example.com/webhook",
+    "headers": {
+      "Authorization": "Bearer <token>"
+    }
+  }
+}
 ```
 
 Canonical notification events are `new_error` and `regression`. The CLI accepts

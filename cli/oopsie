@@ -984,7 +984,7 @@ cmd_notifications() {
 }
 
 cmd_notification_create() {
-  local kind="webhook" url="" events_arg="" url_sources=0 enabled=true
+  local kind="webhook" url="" events_arg="" header_arg="" url_sources=0 header_sources=0 enabled=true
   while [ $# -gt 0 ]; do
     case "$1" in
       --kind|--channel) kind="$2"; shift 2 ;;
@@ -994,6 +994,18 @@ cmd_notification_create() {
         [ -r "$2" ] || die "Cannot read URL file: $2"
         url=$(tr -d '\r\n' < "$2")
         url_sources=$((url_sources + 1))
+        shift 2
+        ;;
+      --header|--custom-header) header_arg="$2"; header_sources=$((header_sources + 1)); shift 2 ;;
+      --header-stdin)
+        header_arg=$(tr -d '\r\n')
+        header_sources=$((header_sources + 1))
+        shift
+        ;;
+      --header-file)
+        [ -r "$2" ] || die "Cannot read header file: $2"
+        header_arg=$(tr -d '\r\n' < "$2")
+        header_sources=$((header_sources + 1))
         shift 2
         ;;
       --events|--event) events_arg="$2"; shift 2 ;;
@@ -1008,15 +1020,31 @@ cmd_notification_create() {
   [ "$url_sources" -eq 0 ] && die "Missing URL. Use --url, --url-stdin, or --url-file."
   [ "$url_sources" -gt 1 ] && die "Use only one of --url, --url-stdin, or --url-file."
   validate_webhook_url "$url"
+  [ "$header_sources" -gt 1 ] && die "Use only one of --header, --header-stdin, or --header-file."
 
-  local events_json body data rule
+  local header_name header_value headers_json events_json body data rule
+  headers_json='{}'
+  if [ "$header_sources" -eq 1 ]; then
+    [[ "$header_arg" == *:* ]] || die "Invalid header. Use the format 'Name: value'."
+    header_name="${header_arg%%:*}"
+    header_value="${header_arg#*:}"
+    header_name="${header_name#${header_name%%[![:space:]]*}}"
+    header_name="${header_name%${header_name##*[![:space:]]}}"
+    header_value="${header_value#${header_value%%[![:space:]]*}}"
+    header_value="${header_value%${header_value##*[![:space:]]}}"
+    [ -n "$header_name" ] || die "Invalid header. The header name cannot be blank."
+    [ -n "$header_value" ] || die "Invalid header. The header value cannot be blank."
+    headers_json=$(jq -n --arg name "$header_name" --arg value "$header_value" '{($name): $value}')
+  fi
+
   events_json=$(events_json_or_die "$events_arg")
   body=$(jq -n \
     --arg channel "$kind" \
     --arg destination "$url" \
+    --argjson headers "$headers_json" \
     --argjson events "$events_json" \
     --argjson enabled "$enabled" \
-    '{notification_rule: {channel: $channel, destination: $destination, events: $events, enabled: $enabled}}')
+    '{notification_rule: {channel: $channel, destination: $destination, headers: $headers, events: $events, enabled: $enabled}}')
 
   resolve_connection
   scope_project
@@ -1040,8 +1068,9 @@ cmd_notification() {
       cat <<EOF
 Usage:
   oopsie notifications [--kind webhook|email]
-  oopsie notification create --kind webhook --url <https-url> [--events new_error,regression]
+  oopsie notification create --kind webhook --url <https-url> [--header 'Name: value'] [--events new_error,regression]
   printf '%s' "\$OOPSIE_WEBHOOK_URL" | oopsie notification create --kind webhook --url-stdin --events error.created,error.reopened
+  printf '%s' "Authorization: Bearer <token>" | oopsie notification create --kind webhook --url <https-url> --header-stdin
 EOF
       ;;
   esac
@@ -1104,8 +1133,9 @@ Errors:
 Notifications:
   oopsie notifications                          List notification rules
   oopsie notifications --kind webhook           List webhook notification rules
-  oopsie notification create --kind webhook --url <https-url> [--events new_error,regression]
-  oopsie webhook create --url <https-url> [--events error.created,error.reopened]
+  oopsie notification create --kind webhook --url <https-url> [--header 'Name: value'] [--events new_error,regression]
+                                                Use --header-stdin or --header-file for secret values
+  oopsie webhook create --url <https-url> [--header 'Name: value'] [--events error.created,error.reopened]
   printf '%s' "\$OOPSIE_WEBHOOK_URL" | oopsie notification create --kind webhook --url-stdin
 
 Global flags:

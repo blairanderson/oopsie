@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_25_062300) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_13_000000) do
   create_table "error_group_notes", force: :cascade do |t|
     t.string "actor_kind", default: "system", null: false
     t.string "actor_label", default: "system", null: false
@@ -54,6 +54,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_25_062300) do
     t.json "events"
     t.integer "project_id", null: false
     t.datetime "updated_at", null: false
+    t.json "webhook_headers"
     t.index ["project_id"], name: "index_notification_rules_on_project_id"
   end
 

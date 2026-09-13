@@ -51,7 +51,7 @@ class NotificationRulesController < ApplicationController
       redirect_to settings_project_path(@project),
         notice: "Test email sent to #{destination}. Check your inbox."
     when "webhook"
-      result = deliver_test_webhook(destination)
+      result = deliver_test_webhook(destination, webhook_headers_from(notification_rule_params))
       if result[:ok]
         redirect_to settings_project_path(@project),
           notice: "Test webhook delivered (HTTP #{result[:code]})."
@@ -71,7 +71,7 @@ class NotificationRulesController < ApplicationController
 
   private
 
-  def deliver_test_webhook(url)
+  def deliver_test_webhook(url, headers = {})
     uri = URI.parse(url)
     return { ok: false, error: "must be an HTTP or HTTPS URL" } unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
 
@@ -82,6 +82,7 @@ class NotificationRulesController < ApplicationController
 
     request = Net::HTTP::Post.new(uri.path.presence || "/")
     request["Content-Type"] = "application/json"
+    headers.each { |name, value| request[name] = value }
     request.body = { event: "test", project: { id: @project.id, name: @project.name }, message: "Oopsie test webhook" }.to_json
 
     response = http.request(request)
@@ -105,6 +106,14 @@ class NotificationRulesController < ApplicationController
   end
 
   def notification_rule_params
-    params.require(:notification_rule).permit(:channel, :destination)
+    params.require(:notification_rule).permit(:channel, :destination, :webhook_header_name, :webhook_header_value)
+  end
+
+  def webhook_headers_from(attributes)
+    name = attributes[:webhook_header_name].to_s.strip
+    value = attributes[:webhook_header_value].to_s.strip
+    return {} if name.blank? && value.blank?
+
+    { name => value }
   end
 end

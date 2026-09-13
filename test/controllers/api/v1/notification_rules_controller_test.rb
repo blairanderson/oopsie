@@ -27,6 +27,7 @@ class Api::V1::NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "a***@example.com", rule["destination_masked"]
     assert_equal %w[new_error regression], rule["events"]
     assert rule["enabled"]
+    assert_equal false, rule["headers_configured"]
   end
 
   test "creates webhook notification rule for a project key" do
@@ -36,6 +37,7 @@ class Api::V1::NotificationRulesControllerTest < ActionDispatch::IntegrationTest
           notification_rule: {
             channel: "webhook",
             destination: "https://hooks.example.com/secret/path",
+            headers: { "Authorization" => "Bearer secret" },
             events: [ "error.created" ]
           }
         }.to_json,
@@ -47,9 +49,12 @@ class Api::V1::NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     rule = json["notification_rule"]
     assert_equal "webhook", rule["channel"]
     assert_not rule.key?("destination")
+    assert_not rule.key?("headers")
     assert_equal "https://hooks.example.com/...", rule["destination_masked"]
     assert_equal [ "new_error" ], rule["events"]
+    assert_equal true, rule["headers_configured"]
     assert_equal [ "new_error" ], NotificationRule.last.events
+    assert_equal({ "Authorization" => "Bearer secret" }, NotificationRule.last.webhook_headers)
   end
 
   test "user key requires project context" do

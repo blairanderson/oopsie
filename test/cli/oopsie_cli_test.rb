@@ -155,6 +155,22 @@ class OopsieCliTest < ActiveSupport::TestCase
     assert_equal "Confirmed nil user.", body["body"]
   end
 
+  test "notification create posts an optional custom header" do
+    header_file = File.join(@tmpdir, "webhook-header.txt")
+    File.write(header_file, "Authorization: Bearer secret")
+
+    stdout, stderr, status = run_cli(
+      "notification", "create", "--kind", "webhook", "--url", "https://hooks.example.com/test",
+      "--header-file", header_file
+    )
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    assert_includes stdout, "Created notification rule #12."
+
+    body = JSON.parse(value_after(curl_calls.last, "-d"))
+    assert_equal({ "Authorization" => "Bearer secret" }, body.dig("notification_rule", "headers"))
+  end
+
   test "errors command filters by workflow state and displays it" do
     stdout, stderr, status = run_cli("errors", "--workflow-state", "blocked")
 
@@ -338,6 +354,17 @@ class OopsieCliTest < ActiveSupport::TestCase
           }
         elsif method == "POST" && url.end_with?("/notes")
           { note: { id: 9, kind: "note" }, error_group: { id: 42, workflow_state: "blocked" } }
+        elsif method == "POST" && url.end_with?("/api/v1/notification_rules")
+          {
+            notification_rule: {
+              id: 12,
+              channel: request_body.dig("notification_rule", "channel"),
+              events: request_body.dig("notification_rule", "events"),
+              enabled: request_body.dig("notification_rule", "enabled"),
+              headers_configured: request_body.dig("notification_rule", "headers")&.any?,
+              destination_masked: "https://hooks.example.com/..."
+            }
+          }
         else
           { error_group: { id: 42, status: "unresolved", workflow_state: "in_progress" } }
         end

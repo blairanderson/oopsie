@@ -16,6 +16,20 @@
     <% end %>
   </div>
 
+  <div class="form-group">
+    <%= f.label :webhook_header_name, "Webhook header (optional)" %>
+    <%= f.text_field :webhook_header_name, placeholder: "Authorization" %>
+    <small class="form-help">Use this for webhook services that require a custom header.</small>
+  </div>
+
+  <div class="form-group">
+    <%= f.label :webhook_header_value, "Webhook header value (optional)" %>
+    <%= f.text_field :webhook_header_value, placeholder: "Bearer your-token" %>
+    <% if notification_rule.errors[:webhook_headers].any? %>
+      <div class="field-errors"><%= notification_rule.errors[:webhook_headers].join(", ") %></div>
+    <% end %>
+  </div>
+
   <div style="display: flex; gap: 0.5rem;">
     <%= f.submit class: "btn btn-primary" %>
     <button type="submit"
