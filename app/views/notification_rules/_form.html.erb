@@ -1,4 +1,8 @@
-<%= form_with(model: [ project, notification_rule ], class: "card form-card") do |f| %>
+<% form_url = test_send_project_notification_rules_path(project) %>
+<% save_url = notification_rule.persisted? ? project_notification_rule_path(project, notification_rule) : project_notification_rules_path(project) %>
+
+<%= form_with(url: form_url, method: :post, scope: :notification_rule,
+    class: "card form-card", data: { turbo: false }) do |f| %>
   <div class="form-group">
     <%= f.label :channel %>
     <%= f.select :channel, NotificationRule.channels.keys.map { |k| [k.titleize, k] },
@@ -31,13 +35,26 @@
   </div>
 
   <div style="display: flex; gap: 0.5rem;">
-    <%= f.submit class: "btn btn-primary" %>
-    <button type="submit"
-        formaction="<%= test_send_project_notification_rules_path(project) %>"
+    <% if notification_rule.persisted? %>
+      <button type="submit"
+        formaction="<%= save_url %>"
         formmethod="post"
+        name="_method"
+        value="patch"
+        class="btn btn-primary">
+        Update Notification rule
+      </button>
+    <% else %>
+      <button type="submit"
+        formaction="<%= save_url %>"
+        formmethod="post"
+        class="btn btn-primary">
+        Create Notification rule
+      </button>
+    <% end %>
+    <button type="submit"
         formnovalidate
-        class="btn btn-secondary"
-        data-turbo="false">
+        class="btn btn-secondary">
       Send Test
     </button>
     <%= link_to "Cancel", settings_project_path(project), class: "btn btn-secondary" %>

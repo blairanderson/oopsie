@@ -23,7 +23,7 @@ Rails.application.routes.draw do
         patch :toggle
       end
       collection do
-        match :test_send, via: [ :post, :patch ]
+        post :test_send
       end
     end
   end

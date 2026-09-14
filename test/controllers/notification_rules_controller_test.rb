@@ -137,13 +137,13 @@ class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert_match(/destination/i, flash[:alert])
   end
 
-  test "test_send accepts PATCH for edit-form submission" do
-    assert_emails 1 do
+  test "test_send only accepts POST" do
+    assert_emails 0 do
       patch test_send_project_notification_rules_url(@project), params: {
         notification_rule: { channel: "email", destination: "patch@example.com" }
       }
     end
-    assert_redirected_to settings_project_path(@project)
+    assert_response :not_found
   end
 
   test "test_send rejects invalid webhook URL" do
@@ -178,10 +178,23 @@ class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Bearer secret", http.last_request["Authorization"]
   end
 
-  test "form renders Send Test button" do
-    get edit_project_notification_rule_url(@project, @rule)
-    assert_response :success
-    assert_select "button[formaction*='test_send']", text: /Send Test/
+  test "form sends test as a native POST without method override" do
+    original_forgery_protection = ActionController::Base.allow_forgery_protection
+    ActionController::Base.allow_forgery_protection = true
+
+    begin
+      get edit_project_notification_rule_url(@project, @rule)
+      assert_response :success
+      test_send_path = test_send_project_notification_rules_path(@project)
+
+      assert_select "form[action='#{test_send_path}'][method='post']" do
+        assert_select "input[name='authenticity_token']", count: 1
+        assert_select "input[name='_method']", count: 0
+        assert_select "button[type='submit']", text: /Send Test/
+      end
+    ensure
+      ActionController::Base.allow_forgery_protection = original_forgery_protection
+    end
   end
 
   test "form renders optional webhook header fields" do
