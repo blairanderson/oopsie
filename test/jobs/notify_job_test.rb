@@ -119,4 +119,37 @@ class NotifyJobTest < ActiveJob::TestCase
       )
     end
   end
+
+  test "manual notification ignores event subscriptions" do
+    @rule.update!(events: [ "regression" ])
+
+    assert_enqueued_with(job: ActionMailer::MailDeliveryJob) do
+      NotifyJob.perform_now(
+        error_group_id: @error_group.id,
+        occurrence_id: @occurrence.id,
+        manual: true
+      )
+    end
+  end
+
+  test "passes manual flag to webhook delivery" do
+    @rule.update!(channel: :webhook, destination: "https://hooks.example.com/test")
+
+    assert_enqueued_with(
+      job: WebhookDeliveryJob,
+      args: [ {
+        notification_rule_id: @rule.id,
+        error_group_id: @error_group.id,
+        occurrence_id: @occurrence.id,
+        is_regression: false,
+        manual: true
+      } ]
+    ) do
+      NotifyJob.perform_now(
+        error_group_id: @error_group.id,
+        occurrence_id: @occurrence.id,
+        manual: true
+      )
+    end
+  end
 end

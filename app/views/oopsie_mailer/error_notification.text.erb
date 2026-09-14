@@ -1,4 +1,4 @@
-<%= @is_regression ? "REGRESSION" : "NEW ERROR" %> in <%= @project.name %>
+<%= @manual ? "MANUAL NOTIFICATION" : (@is_regression ? "REGRESSION" : "NEW ERROR") %> in <%= @project.name %>
 
 Error: <%= @error_group.error_class %>
 Message: <%= @error_group.message %>

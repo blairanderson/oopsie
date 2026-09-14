@@ -35,6 +35,29 @@ class ErrorGroupsController < ApplicationController
     redirect_to project_error_group_path(@project, @error_group), alert: e.message
   end
 
+  def send_notification
+    occurrence = @error_group.occurrences.order(occurred_at: :desc).first
+
+    if occurrence.nil?
+      redirect_to project_error_group_path(@project, @error_group),
+        alert: "This error has no occurrence to notify about."
+      return
+    end
+
+    unless @project.notification_rules.where(enabled: true).exists?
+      redirect_to project_error_group_path(@project, @error_group),
+        alert: "No enabled notification rules are configured."
+      return
+    end
+
+    NotifyJob.perform_later(
+      error_group_id: @error_group.id,
+      occurrence_id: occurrence.id,
+      manual: true
+    )
+    redirect_to project_error_group_path(@project, @error_group), notice: "Notification queued."
+  end
+
   private
 
   def set_project

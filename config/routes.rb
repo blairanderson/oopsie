@@ -15,6 +15,7 @@ Rails.application.routes.draw do
         patch :ignore
         patch :unresolve
         patch :workflow_state, action: :update_workflow_state
+        post :send_notification
       end
       resources :notes, controller: :error_group_notes, only: [ :create ]
     end

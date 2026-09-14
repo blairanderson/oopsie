@@ -1,5 +1,7 @@
 <h2 style="font-family: -apple-system, sans-serif; color: #1a1a2e;">
-  <% if @is_regression %>
+  <% if @manual %>
+    Manual notification in <%= @project.name %>
+  <% elsif @is_regression %>
     Regression in <%= @project.name %>
   <% else %>
     New error in <%= @project.name %>

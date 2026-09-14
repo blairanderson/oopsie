@@ -11,6 +11,8 @@
   <div class="status-actions">
     <span class="badge badge-<%= status_badge_class(@error_group.status) %>"><%= @error_group.status %></span>
     <span class="badge badge-<%= workflow_state_badge_class(@error_group.workflow_state) %>"><%= workflow_state_label(@error_group.workflow_state) %></span>
+    <%= button_to "Send notification", send_notification_project_error_group_path(@project, @error_group),
+        method: :post, class: "btn btn-sm btn-primary", form_class: "inline-form" %>
     <% if @error_group.unresolved? %>
       <%= button_to "Resolve", resolve_project_error_group_path(@project, @error_group), method: :patch, class: "btn btn-sm btn-secondary" %>
       <%= button_to "Ignore", ignore_project_error_group_path(@project, @error_group), method: :patch, class: "btn btn-sm btn-secondary" %>

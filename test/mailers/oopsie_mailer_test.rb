@@ -46,6 +46,19 @@ class OopsieMailerTest < ActionMailer::TestCase
     assert_match "Regression: RuntimeError", email.subject
   end
 
+  test "labels a manual notification" do
+    email = OopsieMailer.error_notification(
+      notification_rule: @rule,
+      error_group: @error_group,
+      occurrence: @occurrence,
+      is_regression: false,
+      manual: true
+    )
+
+    assert_match "Manual: RuntimeError", email.subject
+    assert_match "MANUAL NOTIFICATION", email.body.encoded
+  end
+
   test "includes backtrace in email" do
     email = OopsieMailer.error_notification(
       notification_rule: @rule,

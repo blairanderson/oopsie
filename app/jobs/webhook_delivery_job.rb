@@ -2,7 +2,7 @@ class WebhookDeliveryJob < ApplicationJob
   queue_as :default
   retry_on Net::OpenTimeout, Net::ReadTimeout, wait: 30.seconds, attempts: 3
 
-  def perform(notification_rule_id:, error_group_id:, occurrence_id:, is_regression: false)
+  def perform(notification_rule_id:, error_group_id:, occurrence_id:, is_regression: false, manual: false)
     rule = NotificationRule.find_by(id: notification_rule_id)
     return unless rule&.enabled?
 
@@ -33,6 +33,7 @@ class WebhookDeliveryJob < ApplicationJob
         occurred_at: occurrence.occurred_at.iso8601
       }
     }
+    payload[:manual] = true if manual
 
     deliver_webhook(rule.destination, payload, rule.webhook_headers)
   end

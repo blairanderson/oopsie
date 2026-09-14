@@ -21,6 +21,34 @@ class ErrorGroupsControllerTest < ActionDispatch::IntegrationTest
     assert_select "form[action=?]", project_error_group_notes_path(@project, @error_group)
   end
 
+  test "shows a send notification control" do
+    original_forgery_protection = ActionController::Base.allow_forgery_protection
+    ActionController::Base.allow_forgery_protection = true
+
+    begin
+      get project_error_group_url(@project, @error_group)
+      assert_response :success
+      assert_select "form[action=?][method=?]", send_notification_project_error_group_path(@project, @error_group), "post" do
+        assert_select "input[name='authenticity_token']"
+        assert_select "button", text: /Send notification/i
+      end
+    ensure
+      ActionController::Base.allow_forgery_protection = original_forgery_protection
+    end
+  end
+
+  test "queues a manual notification for the latest occurrence" do
+    assert_enqueued_with(
+      job: NotifyJob,
+      args: [ { error_group_id: @error_group.id, occurrence_id: occurrences(:first).id, manual: true } ]
+    ) do
+      post send_notification_project_error_group_url(@project, @error_group)
+    end
+
+    assert_redirected_to project_error_group_path(@project, @error_group)
+    assert_match(/queued/i, flash[:notice])
+  end
+
   test "shows backtrace from latest occurrence" do
     get project_error_group_url(@project, @error_group)
     assert_response :success

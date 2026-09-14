@@ -60,4 +60,25 @@ class WebhookDeliveryJobTest < ActiveJob::TestCase
     assert_equal "Bearer secret", http.last_request["Authorization"]
     assert_equal "application/json", http.last_request["Content-Type"]
   end
+
+  test "marks a manually sent webhook payload" do
+    http = RecordingHttp.new
+    original_http_new = Net::HTTP.method(:new)
+    Net::HTTP.define_singleton_method(:new) { |*| http }
+
+    begin
+      WebhookDeliveryJob.perform_now(
+        notification_rule_id: @rule.id,
+        error_group_id: @error_group.id,
+        occurrence_id: @occurrence.id,
+        manual: true
+      )
+    ensure
+      Net::HTTP.define_singleton_method(:new, original_http_new)
+    end
+
+    payload = JSON.parse(http.last_request.body)
+    assert_equal "new_error", payload["event"]
+    assert_equal true, payload["manual"]
+  end
 end
