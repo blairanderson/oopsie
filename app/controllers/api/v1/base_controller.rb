@@ -14,6 +14,14 @@ module Api
           return
         end
 
+        if (api_token = ApiToken.authenticate(token))
+          @api_token = api_token
+          @user = api_token.user
+          @project = api_token.project
+          api_token.record_use!(client: request_client_label)
+          return
+        end
+
         @project = Project.find_by(api_key: token)
         return if @project
 
@@ -66,13 +74,23 @@ module Api
       end
 
       def check_rate_limit!
-        rate_key = @project ? "project:#{@project.id}" : "user:#{@user.id}"
+        rate_key = if @api_token
+          "token:#{@api_token.id}"
+        elsif @project
+          "project:#{@project.id}"
+        else
+          "user:#{@user.id}"
+        end
         cache_key = "rate_limit:#{rate_key}:#{Time.current.to_i / 60}"
         count = Rails.cache.increment(cache_key, 1, expires_in: 2.minutes) || 1
 
         if count > 100
           render json: { error: "Rate limit exceeded" }, status: :too_many_requests
         end
+      end
+
+      def request_client_label
+        request.headers["X-Oopsie-Client"].presence || request.user_agent.to_s
       end
     end
   end

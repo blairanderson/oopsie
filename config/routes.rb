@@ -2,6 +2,7 @@ Rails.application.routes.draw do
   resource :session
   resource :account, only: [ :show ] do
     patch :rotate_key
+    resources :api_tokens, only: [ :create, :destroy ], controller: "account_api_tokens"
   end
   resources :passwords, param: :token
   resources :projects do
@@ -27,6 +28,7 @@ Rails.application.routes.draw do
         post :test_send
       end
     end
+    resources :api_tokens, only: [ :create, :destroy ], controller: "project_api_tokens"
   end
 
   namespace :api do

@@ -122,6 +122,35 @@ class McpControllerTest < ActionDispatch::IntegrationTest
     assert_response :method_not_allowed
   end
 
+  test "named project token authenticates and records last used" do
+    token, secret = ApiToken.issue(name: "chatgpt", project: @project)
+
+    post mcp_url, params: rpc("initialize", protocolVersion: "2025-06-18"),
+      headers: {
+        "Authorization" => "Bearer #{secret}",
+        "Content-Type" => "application/json",
+        "X-Oopsie-Client" => "chatgpt-mcp"
+      },
+      as: :json
+
+    assert_response :success
+    token.reload
+    assert_equal 1, token.requests_count
+    assert_equal "chatgpt-mcp", token.last_seen_client
+    assert token.last_used_at
+  end
+
+  test "revoked named token is rejected" do
+    token, secret = ApiToken.issue(name: "grok", user: @user)
+    token.revoke!
+
+    post mcp_url, params: rpc("initialize", protocolVersion: "2025-06-18"),
+      headers: { "Authorization" => "Bearer #{secret}", "Content-Type" => "application/json" },
+      as: :json
+
+    assert_response :unauthorized
+  end
+
   private
 
   def rpc(method, **params)

@@ -1,6 +1,7 @@
 class AccountsController < ApplicationController
   def show
     @user = Current.user
+    @api_tokens = @user.api_tokens.order(Arel.sql("CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END"), created_at: :desc)
   end
 
   def rotate_key

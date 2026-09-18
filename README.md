@@ -49,12 +49,15 @@ Oopsie has two kinds of API keys:
 |----------|-------|------------------|----------|
 | **Project key** | One project | Project → Settings | Reporting exceptions from an app |
 | **User key** | All your projects | Account page | CLI, cross-project tooling, dashboards |
+| **Named keys** | User or one project | Account or Project → Settings | One key per client (ChatGPT, Grok, CI). Revoke independently. |
 
 Both authenticate via `Authorization: Bearer <key>`. When you use a user key on a
 project-scoped endpoint, pass the project as a `project_id` query param or
 `X-Project-Id` header. User keys can also create, rename, disable, and re-enable
 projects through the API and CLI. Project keys cannot administer projects, even
-their own. Keys can be rotated from the UI — old keys invalidate immediately.
+their own. The primary user and project keys can still be rotated from the UI.
+Named keys are shown in full only at creation; last used time, client label, and
+request count tell you whether a key is still live and should be revoked.
 
 ## Client Integration
 

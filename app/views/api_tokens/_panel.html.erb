@@ -1,0 +1,82 @@
+<%# locals: tokens, create_url, revoke_url %>
+<% created_secret = flash[:api_token] %>
+<% active_tokens = tokens.select { |token| !token.revoked? } %>
+<% revoked_tokens = tokens.select(&:revoked?) %>
+
+<% if created_secret.present? %>
+  <div class="card" style="padding: 1rem 1.25rem; margin-bottom: 1rem; border-color: var(--accent, #3b82f6);">
+    <p style="margin: 0 0 0.5rem; font-size: 0.85rem;">New key (shown once):</p>
+    <code class="api-key-display"><%= created_secret %></code>
+    <p style="margin: 0.75rem 0 0; font-size: 0.8rem; color: var(--text-muted);">
+      <strong>Authorization header:</strong>
+      <code>Bearer <%= created_secret %></code>
+    </p>
+  </div>
+<% end %>
+
+<%= form_with url: create_url, scope: :api_token, method: :post, class: "inline-form", html: { style: "display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;" } do |form| %>
+  <%= form.text_field :name, placeholder: "chatgpt", required: true, maxlength: 40, style: "min-width: 12rem;" %>
+  <%= form.submit "Create key", class: "btn btn-primary btn-sm" %>
+<% end %>
+
+<% if active_tokens.any? %>
+  <div class="card" style="overflow-x: auto; margin-bottom: 1rem;">
+    <table class="error-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Key</th>
+          <th>Last used</th>
+          <th>Client</th>
+          <th>Requests</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% active_tokens.each do |token| %>
+          <tr>
+            <td><%= token.name %></td>
+            <td><code><%= token.masked %></code></td>
+            <td><%= token.last_used_at ? "#{time_ago_in_words(token.last_used_at)} ago" : "Never" %></td>
+            <td style="font-size: 0.8rem; color: var(--text-muted);"><%= token.last_seen_client.presence || "—" %></td>
+            <td><%= token.requests_count %></td>
+            <td class="actions-cell">
+              <%= button_to "Revoke", revoke_url.call(token),
+                  method: :delete, class: "btn btn-sm btn-danger",
+                  form_class: "inline-form",
+                  data: { turbo_confirm: "Revoke “#{token.name}”? That client will stop working immediately." } %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>
+
+<% if revoked_tokens.any? %>
+  <p class="section-description" style="margin-top: 0.5rem;">Revoked (kept for last-used history)</p>
+  <div class="card" style="overflow-x: auto;">
+    <table class="error-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Key</th>
+          <th>Last used</th>
+          <th>Revoked</th>
+          <th>Requests</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% revoked_tokens.each do |token| %>
+          <tr>
+            <td class="text-muted"><%= token.name %></td>
+            <td><code><%= token.masked %></code></td>
+            <td><%= token.last_used_at ? "#{time_ago_in_words(token.last_used_at)} ago" : "Never" %></td>
+            <td><%= token.revoked_at ? "#{time_ago_in_words(token.revoked_at)} ago" : "—" %></td>
+            <td><%= token.requests_count %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>

@@ -18,6 +18,7 @@ class ProjectsController < ApplicationController
   def settings
     @notification_rules = @project.notification_rules.order(:created_at)
     @notification_rule = @project.notification_rules.build
+    @api_tokens = @project.api_tokens.order(Arel.sql("CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END"), created_at: :desc)
   end
 
   def new

@@ -2,6 +2,7 @@ class Project < ApplicationRecord
   has_many :error_groups, dependent: :destroy
   has_many :error_group_notes, through: :error_groups
   has_many :notification_rules, dependent: :destroy
+  has_many :api_tokens, dependent: :destroy
 
   enum :status, { active: 0, disabled: 1 }
 

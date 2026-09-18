@@ -22,6 +22,18 @@
   </div>
 </div>
 
+<h2 class="section-title">Named keys</h2>
+<div class="card" style="padding: 1rem 1.25rem;">
+  <p style="margin: 0 0 0.75rem; font-size: 0.85rem; color: var(--text-muted);">
+    Issue a separate key per client (ChatGPT, Grok, a laptop CLI). Revoke one without rotating the others.
+    Last used and request counts are the signal that a key is still live or should be revoked.
+  </p>
+  <%= render "api_tokens/panel",
+      tokens: @api_tokens,
+      create_url: account_api_tokens_path,
+      revoke_url: ->(token) { account_api_token_path(token) } %>
+</div>
+
 <h2 class="section-title">Profile</h2>
 <div class="card" style="padding: 1rem 1.25rem;">
   <p style="margin: 0; font-size: 0.9rem;">

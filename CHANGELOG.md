@@ -8,6 +8,7 @@ All notable changes to Oopsie will be documented in this file.
 - `cli/oopsie` v0.6.0 `--json` envelope for webhook setup/test/list and `version`.
 - `oopsie webhook setup --input-json -` creates or reuses a webhook by exact destination, headers, events, and enabled flag. Secrets stay on stdin.
 - `oopsie webhook test <id>` sends a connectivity probe to a stored webhook. A failed receiver is a typed delivery result.
+- Named, revocable API tokens (user- or project-scoped) with last-used client and request counts, so ChatGPT/Grok MCP connections can be issued and invalidated independently of the primary keys.
 - Remote Streamable HTTP MCP at `POST /mcp` (Bearer user or project API key) so ChatGPT and Grok can call webhook setup/test/list over HTTPS.
 - `cli/oopsie-mcp` stdio adapter for local clients (Cursor, Claude Code) with the same webhook tools.
 - API `POST /api/v1/notification_rules/setup_webhook` and `POST /api/v1/notification_rules/:id/test`.

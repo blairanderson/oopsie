@@ -25,6 +25,18 @@
   </div>
 </div>
 
+<h2 class="section-title">Named project keys</h2>
+<div class="card" style="padding: 1rem 1.25rem;">
+  <p style="margin: 0 0 0.75rem; font-size: 0.85rem; color: var(--text-muted);">
+    Extra keys scoped to <strong>this project only</strong>. Use one for ingest, one for ChatGPT, one for Grok.
+    Revoking a named key does not change the primary project key above.
+  </p>
+  <%= render "api_tokens/panel",
+      tokens: (@api_tokens || @project.api_tokens.order(Arel.sql("CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END"), created_at: :desc)),
+      create_url: project_api_tokens_path(@project),
+      revoke_url: ->(token) { project_api_token_path(@project, token) } %>
+</div>
+
 <h2 class="section-title">Notification Rules</h2>
 <p class="section-description">
   Notifications fire when a <strong>new</strong> error group appears or a <strong>resolved</strong> group regresses.

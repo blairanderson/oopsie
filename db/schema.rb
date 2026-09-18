@@ -10,7 +10,26 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_13_000000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_18_000000) do
+  create_table "api_tokens", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "last_seen_client"
+    t.datetime "last_used_at"
+    t.string "name", null: false
+    t.integer "project_id"
+    t.integer "requests_count", default: 0, null: false
+    t.datetime "revoked_at"
+    t.string "token_digest", null: false
+    t.string "token_prefix", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id"
+    t.index ["project_id", "name"], name: "index_active_project_api_tokens_on_name", unique: true, where: "revoked_at IS NULL AND project_id IS NOT NULL"
+    t.index ["project_id"], name: "index_api_tokens_on_project_id"
+    t.index ["token_digest"], name: "index_api_tokens_on_token_digest", unique: true
+    t.index ["user_id", "name"], name: "index_active_user_api_tokens_on_name", unique: true, where: "revoked_at IS NULL AND user_id IS NOT NULL"
+    t.index ["user_id"], name: "index_api_tokens_on_user_id"
+  end
+
   create_table "error_group_notes", force: :cascade do |t|
     t.string "actor_kind", default: "system", null: false
     t.string "actor_label", default: "system", null: false
@@ -107,6 +126,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_13_000000) do
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
+  add_foreign_key "api_tokens", "projects"
+  add_foreign_key "api_tokens", "users"
   add_foreign_key "error_group_notes", "error_groups"
   add_foreign_key "error_groups", "projects"
   add_foreign_key "notification_rules", "projects"
