@@ -103,9 +103,73 @@ oopsie project enable 42          # resume exception ingest
 oopsie notifications --project myapp
 printf '%s' "$OOPSIE_WEBHOOK_URL" | \
   oopsie notification create --project myapp --kind webhook --url-stdin --events error.created,error.reopened
+
+# Idempotent webhook setup + connectivity probe (CLI v0.6.0+, secrets on stdin)
+printf '%s' '{"url":"'"$OOPSIE_WEBHOOK_URL"'","headers":{"Authorization":"Bearer '"$OOPSIE_WEBHOOK_TOKEN"'"}}' | \
+  oopsie webhook setup --input-json - --json -p myapp
+oopsie webhook test 12 --json -p myapp
 ```
 
-Override the scope for any command with `-p/--project <name>` or the connection with `-c/--connection <name>`. Full help: `oopsie help`.
+Override the scope for any command with `-p/--project <name>` or the connection with `-c/--connection <name>`. Pass `--json` for a machine-readable envelope on webhook setup/test/list and `version`. Full help: `oopsie help`.
+
+### MCP
+
+Oopsie serves a **remote** MCP at `/mcp` so hosted clients (ChatGPT, Grok) can call it over HTTPS. Auth is the same Bearer user or project API key as the JSON API.
+
+```
+https://your-oopsie-instance.com/mcp
+```
+
+**Grok CLI**
+
+```bash
+grok mcp add --transport http oopsie https://your-oopsie-instance.com/mcp \
+  --header "Authorization: Bearer ${OOPSIE_API_KEY}"
+```
+
+**Grok / xAI API** (Remote MCP Tools)
+
+```json
+{
+  "type": "mcp",
+  "server_url": "https://your-oopsie-instance.com/mcp",
+  "server_label": "oopsie",
+  "authorization": "YOUR_OOPSIE_USER_API_KEY"
+}
+```
+
+**ChatGPT** (paid plan, Developer mode)
+
+1. Settings → Apps → Advanced settings → enable Developer mode (workspace admin may need to allow this).
+2. Apps → Create. Name: Oopsie. Connector URL: `https://your-oopsie-instance.com/mcp`.
+3. Authentication: Token / API key. Paste your **User API key** from the Account page.
+4. Scan tools, create the app, then enable it in a new chat.
+
+Pass `project` (name or id) on each tool call when using a user key. A project key scopes the server to that project automatically. Tools never return webhook URLs or header values.
+
+ChatGPT cannot launch a local stdio server. OAuth 2.1 for the ChatGPT connector flow is not implemented yet; token auth is the supported remote path.
+
+### Local stdio adapter
+
+`cli/oopsie-mcp` is for Cursor, Claude Code, and other clients that spawn a process. It shells `oopsie --json` and uses `~/.oopsie/config.json`. Install the CLI first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theinventor/Oopsie/main/cli/oopsie-mcp -o oopsie-mcp
+chmod +x oopsie-mcp && sudo mv oopsie-mcp /usr/local/bin/
+```
+
+```json
+{
+  "mcpServers": {
+    "oopsie": {
+      "command": "oopsie-mcp",
+      "env": { "OOPSIE_BIN": "/usr/local/bin/oopsie" }
+    }
+  }
+}
+```
+
+Tools: `oopsie_webhook_setup`, `oopsie_webhook_test`, `oopsie_webhook_list`. A failed receiver is a structured delivery result, not a protocol error.
 
 ## API
 
@@ -227,6 +291,9 @@ Authenticated with a Bearer token. Project-scoped endpoints need a project conte
 | `PATCH`  | `/api/v1/projects/:id/enable` | Re-enable exception ingest for a project with a user key |
 | `GET`    | `/api/v1/notification_rules` | List notification destinations for the scoped project |
 | `POST`   | `/api/v1/notification_rules` | Create a notification rule (`channel`, `destination`, optional `headers`, `events`) |
+| `POST`   | `/api/v1/notification_rules/setup_webhook` | Idempotent webhook create; exact match on destination, headers, events, and enabled |
+| `POST`   | `/api/v1/notification_rules/:id/test` | Connectivity probe for a stored webhook (`{ event: "test" }`); does not accept a destination |
+| `POST`   | `/mcp` | Streamable HTTP MCP (Bearer API key). Tools: webhook setup, test, list |
 | `GET`    | `/api/v1/error_groups` | List error groups (`?status=`, `?limit=`, `?offset=`) |
 | `GET`    | `/api/v1/error_groups/:id` | Group details + recent occurrences |
 | `PATCH`  | `/api/v1/error_groups/:id/workflow_state` | Set agent workflow state (`workflow_state`, optional `note`) |
@@ -350,6 +417,11 @@ printf '%s' 'Authorization: Bearer <token>' | \
     --url https://example.com/webhook \
     --header-stdin
 ```
+
+Prefer `oopsie webhook setup --input-json -` when an agent should create-or-reuse
+a webhook without putting secrets on argv. `oopsie webhook test <id>` probes the
+stored destination; it does not take a URL. List payloads never include the raw
+destination or header values.
 
 The API accepts custom headers as a JSON object. Oopsie sends them with every
 webhook request and reports only `headers_configured` when a rule is listed:

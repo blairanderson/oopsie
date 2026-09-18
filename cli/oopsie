@@ -2,13 +2,55 @@
 # oopsie — command-line client for the Oopsie exception tracker
 set -euo pipefail
 
-VERSION="0.5.0"
+VERSION="0.6.0"
 CONFIG_DIR="${OOPSIE_CONFIG_DIR:-$HOME/.oopsie}"
 CONFIG_FILE="$CONFIG_DIR/config.json"
+JSON_MODE=0
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
-die()  { echo "Error: $*" >&2; exit 1; }
+json_error() {
+  local code="$1" message="$2"
+  jq -n --arg code "$code" --arg message "$message" \
+    '{protocol_version:1, ok:false, error:{code:$code, message:$message}}'
+}
+
+emit_json_success() {
+  jq -n --argjson result "$1" '{protocol_version:1, ok:true, result:$result}'
+}
+
+emit_http_error() {
+  local http_code="$1" body="$2" fallback="$3"
+  jq -n --argjson status "$http_code" --arg fallback "$fallback" --arg body "$body" '
+    ($body | try fromjson catch {}) as $j |
+    {
+      protocol_version: 1,
+      ok: false,
+      error: {
+        code: (if $status == 401 then "unauthenticated"
+               elif $status == 403 then "forbidden"
+               elif $status == 404 then "not_found"
+               elif $status == 409 then "conflict"
+               elif $status == 422 then "invalid_input"
+               elif $status == 429 then "rate_limited"
+               elif $status == 400 then "invalid_input"
+               else "server_error" end),
+        message: (if ($j.error // "") != "" then $j.error else $fallback end)
+      }
+    }
+    | if ($j.errors | type) == "object" then .error.fields = $j.errors else . end
+  '
+  exit 1
+}
+
+die()  {
+  if [ "${JSON_MODE:-0}" = "1" ]; then
+    json_error "invalid_input" "$*"
+    exit 1
+  fi
+  echo "Error: $*" >&2
+  exit 1
+}
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' is required but not installed."; }
 
 need curl
@@ -130,17 +172,41 @@ api() {
     400)
       err=$(api_error_message "$body" "Bad request")
       if [[ "$err" == *"Project context required"* ]]; then
-        die "No project scoped. Use '--project <name>' or 'oopsie config set-project <name>'."
+        err="No project scoped. Use '--project <name>' or 'oopsie config set-project <name>'."
+      fi
+      if [ "$JSON_MODE" = "1" ]; then
+        emit_http_error "$http_code" "$(jq -n --arg error "$err" '{error:$error}')" "$err"
       fi
       die "$err"
       ;;
-    401) die "Invalid API key. Run 'oopsie whoami' to check." ;;
-    403) die "$(api_error_message "$body" "Forbidden. Your key doesn't have access to that project.")" ;;
-    404) die "$(api_error_message "$body" "Not found.")" ;;
-    409) die "$(api_error_message "$body" "Conflict.")" ;;
-    422) die "$(api_error_message "$body" "Unprocessable Entity.")" ;;
-    429) die "Rate limit exceeded. Try again in a minute." ;;
-    *)   die "Server returned HTTP $http_code: $body" ;;
+    401)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Invalid API key. Run 'oopsie whoami' to check."
+      die "Invalid API key. Run 'oopsie whoami' to check."
+      ;;
+    403)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Forbidden. Your key doesn't have access to that project."
+      die "$(api_error_message "$body" "Forbidden. Your key doesn't have access to that project.")"
+      ;;
+    404)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Not found."
+      die "$(api_error_message "$body" "Not found.")"
+      ;;
+    409)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Conflict."
+      die "$(api_error_message "$body" "Conflict.")"
+      ;;
+    422)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Unprocessable Entity."
+      die "$(api_error_message "$body" "Unprocessable Entity.")"
+      ;;
+    429)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Rate limit exceeded. Try again in a minute."
+      die "Rate limit exceeded. Try again in a minute."
+      ;;
+    *)
+      [ "$JSON_MODE" = "1" ] && emit_http_error "$http_code" "$body" "Server returned HTTP $http_code"
+      die "Server returned HTTP $http_code: $body"
+      ;;
   esac
 }
 
@@ -1078,7 +1144,112 @@ EOF
 
 cmd_webhooks() {
   [ "${1:-}" = "list" ] && shift
+  if [ "${JSON_MODE:-0}" = "1" ]; then
+    resolve_connection
+    scope_project
+    local data
+    data=$(api GET /api/v1/notification_rules)
+    echo "$data" | jq '{protocol_version:1, ok:true, result: {webhooks: [.notification_rules[] | select(.channel == "webhook")]}}'
+    return
+  fi
   cmd_notifications --kind webhook "$@"
+}
+
+cmd_webhook_setup() {
+  local input_json=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --input-json)
+        [ "${2:-}" = "-" ] || die "Use --input-json - to read setup secrets from stdin."
+        input_json=$(cat)
+        shift 2
+        ;;
+      --json) JSON_MODE=1; shift ;;
+      -*) die "Unknown flag: $1. Run 'oopsie help'." ;;
+      *)  die "Unexpected argument: $1. Run 'oopsie help'." ;;
+    esac
+  done
+
+  [ -n "$input_json" ] || die "Missing setup document. Use --input-json -."
+  printf '%s' "$input_json" | jq -e 'type == "object"' >/dev/null 2>&1 || die "Setup input must be a JSON object."
+
+  local url headers events_csv events enabled body data rule created
+  url=$(printf '%s' "$input_json" | jq -r '.url // .destination // empty')
+  [ -n "$url" ] || die "Missing url in setup document."
+  validate_webhook_url "$url"
+
+  headers=$(printf '%s' "$input_json" | jq -c '.headers // {}')
+  printf '%s' "$headers" | jq -e 'type == "object"' >/dev/null 2>&1 || die "headers must be a JSON object."
+  events_csv=$(printf '%s' "$input_json" | jq -r '(.events // ["new_error","regression"]) | if type == "array" then join(",") else . end')
+  events=$(events_json_or_die "$events_csv")
+  enabled=$(printf '%s' "$input_json" | jq -c '.enabled // true')
+
+  body=$(jq -n \
+    --arg destination "$url" \
+    --argjson headers "$headers" \
+    --argjson events "$events" \
+    --argjson enabled "$enabled" \
+    '{notification_rule: {channel: "webhook", destination: $destination, headers: $headers, events: $events, enabled: $enabled}}')
+
+  resolve_connection
+  scope_project
+  data=$(api_json POST /api/v1/notification_rules/setup_webhook "$body")
+  rule=$(echo "$data" | jq '.notification_rule')
+  created=$(echo "$data" | jq -r '.created')
+
+  if [ "$JSON_MODE" = "1" ]; then
+    emit_json_success "$(printf '%s' "$data" | jq -c '{notification_rule, created}')"
+    return
+  fi
+
+  if [ "$created" = "true" ]; then
+    echo "Created notification rule #$(echo "$rule" | jq -r '.id')."
+  else
+    echo "Reused notification rule #$(echo "$rule" | jq -r '.id')."
+  fi
+  echo "  Channel:      $(echo "$rule" | jq -r '.channel')"
+  echo "  Events:       $(echo "$rule" | jq -r '.events | join(",")')"
+  echo "  Enabled:      $(echo "$rule" | jq -r '.enabled')"
+  echo "  Destination:  $(echo "$rule" | jq -r '.destination_masked // "[masked]"')"
+}
+
+cmd_webhook_test() {
+  local rule_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) JSON_MODE=1; shift ;;
+      --url|--destination|--header|--url-stdin|--header-stdin)
+        die "webhook test takes a stored rule id, not a destination."
+        ;;
+      -*) die "Unknown flag: $1. Run 'oopsie help'." ;;
+      *)
+        [ -z "$rule_id" ] || die "Unexpected argument: $1. Run 'oopsie help'."
+        rule_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ "$rule_id" =~ ^[0-9]+$ ]] || die "Usage: oopsie webhook test <rule_id>"
+
+  resolve_connection
+  scope_project
+  local data delivered status
+  data=$(api POST "/api/v1/notification_rules/${rule_id}/test")
+
+  if [ "$JSON_MODE" = "1" ]; then
+    emit_json_success "$(printf '%s' "$data" | jq -c '{delivery}')"
+    return 0
+  fi
+
+  delivered=$(echo "$data" | jq -r '.delivery.delivered')
+  status=$(echo "$data" | jq -r '.delivery.http_status // empty')
+  if [ "$delivered" = "true" ]; then
+    echo "Test webhook delivered (HTTP ${status})."
+  else
+    echo "Test webhook failed: $(echo "$data" | jq -r '.delivery.failure.message // "unknown error"')" >&2
+    exit 1
+  fi
 }
 
 cmd_webhook() {
@@ -1086,6 +1257,8 @@ cmd_webhook() {
   shift 2>/dev/null || true
   case "$sub" in
     create) cmd_notification_create --kind webhook "$@" ;;
+    setup) cmd_webhook_setup "$@" ;;
+    test) cmd_webhook_test "$@" ;;
     list|ls) cmd_webhooks "$@" ;;
     *) die "Unknown webhook command: $sub. Run 'oopsie help' for usage." ;;
   esac
@@ -1133,14 +1306,18 @@ Errors:
 Notifications:
   oopsie notifications                          List notification rules
   oopsie notifications --kind webhook           List webhook notification rules
+  oopsie webhook setup --input-json -           Idempotent webhook create (secrets on stdin)
+  oopsie webhook test <id>                      Probe a stored webhook by id
   oopsie notification create --kind webhook --url <https-url> [--header 'Name: value'] [--events new_error,regression]
                                                 Use --header-stdin or --header-file for secret values
   oopsie webhook create --url <https-url> [--header 'Name: value'] [--events error.created,error.reopened]
   printf '%s' "\$OOPSIE_WEBHOOK_URL" | oopsie notification create --kind webhook --url-stdin
+  printf '%s' '{"url":"https://example.com/hook"}' | oopsie webhook setup --input-json - --json
 
 Global flags:
   -p, --project <name|id>                      Scope to a specific remote project
   -c, --connection <name>                      Use a non-default connection
+  --json                                       Machine-readable envelope (webhook setup/test/list, version)
   -h, --help                                   Show this help
   -v, --version                                Show version
 
@@ -1169,6 +1346,7 @@ fi
 while [ $# -gt 0 ]; do
   case "$1" in
     -c|--connection) CONNECTION_FLAG="$2"; shift 2 ;;
+    --json) JSON_MODE=1; shift ;;
     -p|--project)
       if [ "$is_config_add" = "1" ]; then
         args+=("$1"); shift
@@ -1200,6 +1378,12 @@ case "$command" in
   webhooks)             cmd_webhooks "$@" ;;
   webhook)              cmd_webhook "$@" ;;
   help|--help|-h)       cmd_help ;;
-  version|--version|-v) echo "oopsie ${VERSION}" ;;
+  version|--version|-v)
+    if [ "$JSON_MODE" = "1" ]; then
+      jq -n --arg v "$VERSION" '{protocol_version:1, ok:true, result:{version:$v, schema:1}}'
+    else
+      echo "oopsie ${VERSION}"
+    fi
+    ;;
   *)                    die "Unknown command: $command. Run 'oopsie help' for usage." ;;
 esac

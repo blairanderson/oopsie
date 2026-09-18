@@ -51,13 +51,17 @@ class NotificationRulesController < ApplicationController
       redirect_to settings_project_path(@project),
         notice: "Test email sent to #{destination}. Check your inbox."
     when "webhook"
-      result = deliver_test_webhook(destination, webhook_headers_from(notification_rule_params))
-      if result[:ok]
+      result = WebhookDelivery.call(
+        url: destination,
+        headers: webhook_headers_from(notification_rule_params),
+        payload: WebhookTestProbe.payload(project: @project)
+      )
+      if result.delivered
         redirect_to settings_project_path(@project),
-          notice: "Test webhook delivered (HTTP #{result[:code]})."
+          notice: "Test webhook delivered (HTTP #{result.http_status})."
       else
         redirect_to settings_project_path(@project),
-          alert: "Test webhook failed: #{result[:error]}"
+          alert: "Test webhook failed: #{result.failure["message"]}"
       end
     else
       redirect_to settings_project_path(@project),
@@ -70,32 +74,6 @@ class NotificationRulesController < ApplicationController
   end
 
   private
-
-  def deliver_test_webhook(url, headers = {})
-    uri = URI.parse(url)
-    return { ok: false, error: "must be an HTTP or HTTPS URL" } unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
-
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = uri.scheme == "https"
-    http.open_timeout = 10
-    http.read_timeout = 10
-
-    request = Net::HTTP::Post.new(uri.path.presence || "/")
-    request["Content-Type"] = "application/json"
-    headers.each { |name, value| request[name] = value }
-    request.body = { event: "test", project: { id: @project.id, name: @project.name }, message: "Oopsie test webhook" }.to_json
-
-    response = http.request(request)
-    if response.is_a?(Net::HTTPSuccess)
-      { ok: true, code: response.code }
-    else
-      { ok: false, error: "HTTP #{response.code}" }
-    end
-  rescue URI::InvalidURIError
-    { ok: false, error: "invalid URL" }
-  rescue => e
-    { ok: false, error: "#{e.class}: #{e.message}" }
-  end
 
   def set_project
     @project = Project.find(params[:project_id])

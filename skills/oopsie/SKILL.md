@@ -30,7 +30,8 @@ command -v oopsie
 oopsie version
 ```
 
-Workflow state and notes require `oopsie 0.4.0` or newer. If an authenticated
+Workflow state and notes require `oopsie 0.4.0` or newer. Webhook setup/test
+with `--json` (and `oopsie-mcp`) require `oopsie 0.6.0` or newer. If an authenticated
 local CLI is older, update only the CLI script from the shipped source and do not
 read, print, or rewrite `~/.oopsie/config.json`:
 
@@ -52,6 +53,10 @@ oopsie whoami
   - **Project API key** — one specific project. Project is implicit.
 
 Config lives at `~/.oopsie/config.json`. Don't display full keys — they're sensitive.
+
+Hosted clients (ChatGPT, Grok) cannot run this CLI. They must use the remote MCP at
+`https://<oopsie-host>/mcp` with `Authorization: Bearer <user API key>` and pass
+`project` on tool calls.
 
 ## Setup (only if not already configured)
 
@@ -84,7 +89,7 @@ oopsie projects      # list every project this key can access
 
 ## Scoping Commands to a Project
 
-Commands that operate on project resources (`project`, `errors`, `show`, `resolve`, `ignore`, `reopen`, `notifications`, `notification create`) need a project scope. In order of precedence:
+Commands that operate on project resources (`project`, `errors`, `show`, `resolve`, `ignore`, `reopen`, `notifications`, `notification create`, `webhook setup`, `webhook test`, `webhooks`) need a project scope. In order of precedence:
 
 1. `--project <name-or-id>` flag on the command
 2. A project pinned on the connection via `oopsie config set-project <name>`
@@ -129,20 +134,27 @@ Workflow states are separate from lifecycle status:
 ```bash
 oopsie notifications [--project <name>]                    # list configured destinations
 oopsie notifications --kind webhook [--project <name>]      # list only webhooks
+oopsie webhooks --json [--project <name>]                   # machine-readable webhook list
 
-# Prefer stdin/file for webhook URLs that contain secrets, so they are not stored in shell history.
+# Prefer stdin JSON for webhook URLs and headers so they are not stored in shell history.
+printf '%s' '{"url":"'"$OOPSIE_WEBHOOK_URL"'","headers":{"Authorization":"Bearer '"$TOKEN"'"}}' | \
+  oopsie webhook setup --input-json - --json --project <name>
+
+oopsie webhook test <rule_id> --json --project <name>
+
+# Older create path (still valid). Prefer setup when the caller needs idempotency.
 printf '%s' "$OOPSIE_WEBHOOK_URL" | \
   oopsie notification create --project <name> --kind webhook --url-stdin --events error.created,error.reopened
-
-oopsie notification create --project <name> --kind webhook --url-file /path/to/webhook-url --events new_error,regression
 ```
 
 Canonical events are `new_error` and `regression`. The CLI also accepts aliases
-`error.created`, `error.reopened`, and `error.regressed`.
+`error.created`, `error.reopened`, and `error.regressed`. Never print webhook URLs
+or header values back to the user.
 
 ### Global flags
 - `-p, --project <name|id>` — scope to a specific project (one-off override)
 - `-c, --connection <name>` — use a non-default connection
+- `--json` — machine-readable `{protocol_version, ok, result|error}` on webhook setup/test/list and `version`
 
 ## Workflow: Investigating and Fixing Errors
 

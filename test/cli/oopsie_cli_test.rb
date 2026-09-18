@@ -46,7 +46,7 @@ class OopsieCliTest < ActiveSupport::TestCase
     assert_equal "in_progress", body["workflow_state"]
     assert_equal "Investigating cache miss.", body["note"]
     assert_includes headers_from(args), "X-Project-Id: 7"
-    assert_includes headers_from(args), "X-Oopsie-Client: cli/oopsie 0.5.0"
+    assert_includes headers_from(args), "X-Oopsie-Client: cli/oopsie 0.6.0"
   end
 
   test "projects command displays project status" do
@@ -69,6 +69,9 @@ class OopsieCliTest < ActiveSupport::TestCase
     assert_includes stdout, "oopsie project disable <project>"
     assert_includes stdout, "User key"
     assert_includes stdout, "create, rename, disable, and enable projects"
+    assert_includes stdout, "oopsie webhook setup --input-json -"
+    assert_includes stdout, "oopsie webhook test <id>"
+    assert_includes stdout, "--json"
   end
 
   test "project create posts name and if missing flag and prints project key" do
@@ -171,6 +174,68 @@ class OopsieCliTest < ActiveSupport::TestCase
     assert_equal({ "Authorization" => "Bearer secret" }, body.dig("notification_rule", "headers"))
   end
 
+  test "webhook setup posts secrets from stdin json and prints an envelope" do
+    stdout, stderr, status = Open3.capture3(
+      {
+        "OOPSIE_CONFIG_DIR" => @config_dir,
+        "CURL_LOG" => @curl_log,
+        "PATH" => "#{@bin_dir}:#{ENV.fetch("PATH")}"
+      },
+      Rails.root.join("cli/oopsie").to_s,
+      "--json", "webhook", "setup", "--input-json", "-",
+      stdin_data: {
+        url: "https://hooks.example.com/secret",
+        headers: { "Authorization" => "Bearer tok" },
+        events: [ "new_error" ],
+        enabled: true
+      }.to_json
+    )
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    envelope = JSON.parse(stdout)
+    assert envelope["ok"]
+    assert_equal 1, envelope["protocol_version"]
+    assert_equal 12, envelope.dig("result", "notification_rule", "id")
+    assert envelope.dig("result", "created")
+    refute_includes stdout, "hooks.example.com/secret"
+    refute_includes stdout, "Bearer tok"
+
+    body = JSON.parse(value_after(curl_calls.last, "-d"))
+    assert_equal "https://hooks.example.com/secret", body.dig("notification_rule", "destination")
+    assert_equal({ "Authorization" => "Bearer tok" }, body.dig("notification_rule", "headers"))
+    assert_includes curl_calls.last.last, "/api/v1/notification_rules/setup_webhook"
+  end
+
+  test "webhook test posts by rule id and returns a connectivity probe result" do
+    stdout, stderr, status = run_cli("--json", "webhook", "test", "12")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    envelope = JSON.parse(stdout)
+    assert envelope["ok"]
+    assert_equal true, envelope.dig("result", "delivery", "delivered")
+    assert_equal "connectivity_probe", envelope.dig("result", "delivery", "payload_kind")
+    assert_includes curl_calls.last.last, "/api/v1/notification_rules/12/test"
+    refute_includes curl_calls.last, "-d"
+  end
+
+  test "webhooks json lists masked destinations" do
+    stdout, stderr, status = run_cli("--json", "webhooks")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    envelope = JSON.parse(stdout)
+    assert_equal "https://hooks.example.com/...", envelope.dig("result", "webhooks", 0, "destination_masked")
+    assert_nil envelope.dig("result", "webhooks", 0, "destination")
+  end
+
+  test "version json reports schema 1" do
+    stdout, stderr, status = run_cli("--json", "version")
+
+    assert status.success?, "stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+    envelope = JSON.parse(stdout)
+    assert_equal "0.6.0", envelope.dig("result", "version")
+    assert_equal 1, envelope.dig("result", "schema")
+  end
+
   test "errors command filters by workflow state and displays it" do
     stdout, stderr, status = run_cli("errors", "--workflow-state", "blocked")
 
@@ -220,7 +285,7 @@ class OopsieCliTest < ActiveSupport::TestCase
   end
 
   def fake_curl_script
-    <<~RUBY
+    <<~'RUBY'
       #!/usr/bin/env ruby
       require "json"
 
@@ -354,6 +419,41 @@ class OopsieCliTest < ActiveSupport::TestCase
           }
         elsif method == "POST" && url.end_with?("/notes")
           { note: { id: 9, kind: "note" }, error_group: { id: 42, workflow_state: "blocked" } }
+        elsif method == "POST" && url.end_with?("/api/v1/notification_rules/setup_webhook")
+          {
+            notification_rule: {
+              id: 12,
+              channel: "webhook",
+              events: request_body.dig("notification_rule", "events"),
+              enabled: request_body.dig("notification_rule", "enabled"),
+              headers_configured: request_body.dig("notification_rule", "headers")&.any?,
+              destination_masked: "https://hooks.example.com/..."
+            },
+            created: true
+          }
+        elsif method == "POST" && url.match?(%r{/api/v1/notification_rules/\d+/test$})
+          {
+            delivery: {
+              rule_id: url[/\d+(?=\/test$)/].to_i,
+              delivered: true,
+              http_status: 204,
+              payload_kind: "connectivity_probe",
+              failure: nil
+            }
+          }
+        elsif method == "GET" && url.end_with?("/api/v1/notification_rules")
+          {
+            notification_rules: [
+              {
+                id: 12,
+                channel: "webhook",
+                events: [ "new_error", "regression" ],
+                enabled: true,
+                headers_configured: true,
+                destination_masked: "https://hooks.example.com/..."
+              }
+            ]
+          }
         elsif method == "POST" && url.end_with?("/api/v1/notification_rules")
           {
             notification_rule: {

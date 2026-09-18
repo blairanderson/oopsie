@@ -1,6 +1,6 @@
 class WebhookDeliveryJob < ApplicationJob
   queue_as :default
-  retry_on Net::OpenTimeout, Net::ReadTimeout, wait: 30.seconds, attempts: 3
+  retry_on WebhookDelivery::TimeoutError, wait: 30.seconds, attempts: 3
 
   def perform(notification_rule_id:, error_group_id:, occurrence_id:, is_regression: false, manual: false)
     rule = NotificationRule.find_by(id: notification_rule_id)
@@ -35,29 +35,10 @@ class WebhookDeliveryJob < ApplicationJob
     }
     payload[:manual] = true if manual
 
-    deliver_webhook(rule.destination, payload, rule.webhook_headers)
-  end
-
-  private
-
-  def deliver_webhook(url, payload, headers = {})
-    uri = URI.parse(url)
-    return unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
-
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = uri.scheme == "https"
-    http.open_timeout = 10
-    http.read_timeout = 10
-
-    request = Net::HTTP::Post.new(uri.path.presence || "/")
-    request["Content-Type"] = "application/json"
-    headers.each { |name, value| request[name] = value }
-    request.body = payload.to_json
-
-    response = http.request(request)
-
-    unless response.is_a?(Net::HTTPSuccess)
-      Rails.logger.warn "[Oopsie] Webhook delivery to #{url} returned #{response.code}"
+    result = WebhookDelivery.call(url: rule.destination, headers: rule.webhook_headers, payload: payload)
+    raise WebhookDelivery::TimeoutError, result.failure["message"] if result.retryable?
+    unless result.delivered
+      Rails.logger.warn "[Oopsie] Webhook delivery to #{rule.destination_masked} failed: #{result.failure&.fetch("message", "unknown error")}"
     end
   end
 end

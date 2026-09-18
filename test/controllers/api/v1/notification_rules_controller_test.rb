@@ -1,6 +1,24 @@
 require "test_helper"
 
 class Api::V1::NotificationRulesControllerTest < ActionDispatch::IntegrationTest
+  class RecordingHttp
+    attr_reader :last_request
+
+    def use_ssl=(_value)
+    end
+
+    def open_timeout=(_value)
+    end
+
+    def read_timeout=(_value)
+    end
+
+    def request(request)
+      @last_request = request
+      Net::HTTPSuccess.new("1.1", "204", "No Content")
+    end
+  end
+
   setup do
     @project = projects(:myapp)
     @project_headers = {
@@ -132,5 +150,80 @@ class Api::V1::NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
     json = JSON.parse(response.body)
     assert_match(/included in the list/, json.dig("errors", "channel").join)
+  end
+
+  test "setup webhook creates then returns the same rule for an exact match" do
+    params = {
+      notification_rule: {
+        destination: "https://hooks.example.com/setup",
+        headers: { "Authorization" => "Bearer secret" },
+        events: [ "new_error" ]
+      }
+    }
+
+    assert_difference "NotificationRule.count", 1 do
+      post setup_webhook_api_v1_notification_rules_url,
+        params: params.to_json,
+        headers: @project_headers
+    end
+    assert_response :created
+    first = JSON.parse(response.body)
+    assert first["created"]
+    assert_not first["notification_rule"].key?("destination")
+    assert_equal "https://hooks.example.com/...", first.dig("notification_rule", "destination_masked")
+
+    assert_no_difference "NotificationRule.count" do
+      post setup_webhook_api_v1_notification_rules_url,
+        params: params.to_json,
+        headers: @project_headers
+    end
+    assert_response :success
+    second = JSON.parse(response.body)
+    assert_equal false, second["created"]
+    assert_equal first.dig("notification_rule", "id"), second.dig("notification_rule", "id")
+  end
+
+  test "tests a persisted webhook by id without accepting a destination" do
+    rule = @project.notification_rules.create!(
+      channel: :webhook,
+      destination: "https://hooks.example.com/test?token=secret",
+      webhook_headers: { "X-Token" => "abc" },
+      enabled: false
+    )
+    http = RecordingHttp.new
+    original_http_new = Net::HTTP.method(:new)
+    Net::HTTP.define_singleton_method(:new) { |*| http }
+
+    begin
+      post test_api_v1_notification_rule_url(rule),
+        params: { destination: "https://evil.example" }.to_json,
+        headers: @project_headers
+    ensure
+      Net::HTTP.define_singleton_method(:new, original_http_new)
+    end
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    delivery = json["delivery"]
+    assert_equal rule.id, delivery["rule_id"]
+    assert delivery["delivered"]
+    assert_equal 204, delivery["http_status"]
+    assert_equal "connectivity_probe", delivery["payload_kind"]
+    assert_nil delivery["failure"]
+    assert_not json.key?("destination")
+    assert_equal "/test?token=secret", http.last_request.path
+    assert_equal "abc", http.last_request["X-Token"]
+    payload = JSON.parse(http.last_request.body)
+    assert_equal "test", payload["event"]
+    assert_equal @project.name, payload.dig("project", "name")
+  end
+
+  test "webhook test rejects email rules" do
+    post test_api_v1_notification_rule_url(notification_rules(:email_rule)),
+      headers: @project_headers
+
+    assert_response :unprocessable_entity
+    json = JSON.parse(response.body)
+    assert_match(/webhook/, json.dig("errors", "channel").join)
   end
 end

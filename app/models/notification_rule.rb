@@ -66,7 +66,27 @@ class NotificationRule < ApplicationRecord
     @webhook_header_value ||= webhook_headers.values.first
   end
 
+  def destination_masked
+    webhook? ? mask_webhook_url : mask_email
+  end
+
   private
+
+  def mask_webhook_url
+    uri = URI.parse(destination)
+    return "[masked]" unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
+
+    "#{uri.scheme}://#{uri.host}/..."
+  rescue URI::InvalidURIError
+    "[masked]"
+  end
+
+  def mask_email
+    local, domain = destination.to_s.split("@", 2)
+    return "[masked]" if local.blank? || domain.blank?
+
+    "#{local.first}***@#{domain}"
+  end
 
   def normalize_events
     self.events = events

@@ -1,0 +1,325 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# oopsie-mcp — stdio MCP adapter over the oopsie CLI (webhook setup/test/list).
+require "json"
+require "open3"
+require "timeout"
+
+module OopsieMcp
+  PROTOCOL_VERSION = "2025-06-18"
+  SUPPORTED_SCHEMA = 1
+  MIN_CLI_VERSION = "0.6.0"
+
+  class Secret
+    def initialize(raw)
+      @raw = raw.to_s
+    end
+
+    def to_s = "[redacted]"
+    def inspect = "#<OopsieMcp::Secret [redacted]>"
+
+    def write_json(io, extra)
+      document = extra.merge("url" => @raw)
+      io.write(JSON.generate(document))
+    end
+  end
+
+  class Cli
+    def initialize(bin: ENV.fetch("OOPSIE_BIN", "oopsie"), timeout: 45)
+      @bin = bin
+      @timeout = timeout
+    end
+
+    def schema_ok?
+      return @schema_ok unless @schema_ok.nil?
+
+      envelope = run([ "--json", "version" ])
+      version = envelope.dig("result", "version").to_s
+      schema = envelope.dig("result", "schema").to_i
+      @schema_ok = envelope.is_a?(Hash) && envelope["ok"] &&
+        schema == SUPPORTED_SCHEMA &&
+        Gem::Version.new(version) >= Gem::Version.new(MIN_CLI_VERSION)
+    rescue StandardError
+      @schema_ok = false
+    end
+
+    def run(argv, stdin_secret: nil, extra_secrets: {})
+      command = [ @bin, *argv ]
+      Timeout.timeout(@timeout) do
+        Open3.popen3(filtered_env, *command) do |input, output, error, waiter|
+          if stdin_secret
+            stdin_secret.write_json(input, extra_secrets)
+          end
+          input.close
+          stdout = output.read
+          stderr = error.read
+          status = waiter.value
+          parse_envelope(stdout, stderr, status)
+        end
+      end
+    rescue Timeout::Error
+      {
+        "protocol_version" => 1,
+        "ok" => false,
+        "error" => { "code" => "server_error", "message" => "The oopsie CLI timed out." }
+      }
+    end
+
+    private
+
+    def filtered_env
+      env = {}
+      %w[HOME PATH OOPSIE_CONFIG_DIR LANG LC_ALL].each do |key|
+        env[key] = ENV[key] if ENV[key]
+      end
+      env
+    end
+
+    def parse_envelope(stdout, stderr, status)
+      parsed = JSON.parse(stdout)
+      return parsed if parsed.is_a?(Hash)
+
+      {
+        "protocol_version" => 1,
+        "ok" => false,
+        "error" => { "code" => "server_error", "message" => "Malformed CLI output." }
+      }
+    rescue JSON::ParserError
+      {
+        "protocol_version" => 1,
+        "ok" => false,
+        "error" => {
+          "code" => status&.success? ? "server_error" : "not_configured",
+          "message" => "The oopsie CLI did not return JSON."
+        }
+      }
+    end
+  end
+
+  class Server
+    def initialize(cli: Cli.new, input: $stdin, output: $stdout)
+      @cli = cli
+      @input = input
+      @output = output
+      @output.sync = true
+    end
+
+    def run
+      @input.each_line do |line|
+        line = line.strip
+        next if line.empty?
+
+        message = JSON.parse(line)
+        handle(message)
+      rescue JSON::ParserError
+        reply_error(nil, -32700, "Parse error")
+      rescue StandardError => error
+        reply_error(nil, -32603, error.message)
+      end
+    end
+
+    private
+
+    def handle(message)
+      return unless message["method"]
+
+      id = message["id"]
+      case message["method"]
+      when "initialize"
+        reply(id, {
+          "protocolVersion" => PROTOCOL_VERSION,
+          "capabilities" => { "tools" => { "listChanged" => false } },
+          "serverInfo" => { "name" => "oopsie", "version" => MIN_CLI_VERSION },
+          "instructions" => "Configure the oopsie CLI first (`oopsie config add`). Tools set up and test webhook notification rules. Destinations are never returned."
+        })
+      when "notifications/initialized", "notifications/cancelled"
+        nil
+      when "tools/list"
+        reply(id, { "tools" => tool_descriptors })
+      when "ping"
+        reply(id, {})
+      when "tools/call"
+        reply(id, call_tool(message.dig("params", "name"), message.dig("params", "arguments") || {}))
+      else
+        reply_error(id, -32601, "Method not found") if id
+      end
+    end
+
+    def tool_descriptors
+      [
+        {
+          "name" => "oopsie_webhook_setup",
+          "description" => "Ensure a webhook notification rule exists for an Oopsie project. Idempotent on the exact destination, headers, events, and enabled flag. Secrets are sent once and never returned. Then call oopsie_webhook_test with the returned id.",
+          "inputSchema" => {
+            "type" => "object",
+            "required" => [ "url" ],
+            "additionalProperties" => false,
+            "properties" => {
+              "connection" => { "type" => "string" },
+              "project" => { "type" => "string" },
+              "url" => { "type" => "string", "description" => "Webhook URL. Never echoed back." },
+              "headers" => {
+                "type" => "object",
+                "additionalProperties" => { "type" => "string" }
+              },
+              "events" => {
+                "type" => "array",
+                "items" => { "enum" => [ "new_error", "regression" ] }
+              },
+              "enabled" => { "type" => "boolean" }
+            }
+          }
+        },
+        {
+          "name" => "oopsie_webhook_test",
+          "description" => "Send a connectivity probe (event=test) to a stored webhook rule. Uses the destination and headers already saved on the server. A failed receiver is a structured result, not a protocol error.",
+          "inputSchema" => {
+            "type" => "object",
+            "required" => [ "rule_id" ],
+            "additionalProperties" => false,
+            "properties" => {
+              "connection" => { "type" => "string" },
+              "project" => { "type" => "string" },
+              "rule_id" => { "type" => "integer", "minimum" => 1 }
+            }
+          }
+        },
+        {
+          "name" => "oopsie_webhook_list",
+          "description" => "List webhook notification rules for the scoped project. Destinations are masked; header values are never returned.",
+          "inputSchema" => {
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => {
+              "connection" => { "type" => "string" },
+              "project" => { "type" => "string" }
+            }
+          }
+        }
+      ]
+    end
+
+    def call_tool(name, arguments)
+      unless @cli.schema_ok?
+        return tool_error("The oopsie CLI must be #{MIN_CLI_VERSION} or newer with --json support. Run `oopsie version`.")
+      end
+
+      case name
+      when "oopsie_webhook_setup" then setup(arguments)
+      when "oopsie_webhook_test" then test(arguments)
+      when "oopsie_webhook_list" then list(arguments)
+      else tool_error("Unknown tool: #{name}")
+      end
+    end
+
+    def setup(arguments)
+      url = arguments["url"].to_s
+      return tool_error("url is required.") if url.empty?
+      return tool_error("url must be an HTTP or HTTPS URL.") unless url.match?(/\Ahttps?:\/\//)
+
+      extra = {}
+      extra["headers"] = arguments["headers"] if arguments["headers"].is_a?(Hash)
+      extra["events"] = arguments["events"] if arguments["events"].is_a?(Array)
+      extra["enabled"] = arguments.key?("enabled") ? arguments["enabled"] : true
+
+      envelope = @cli.run(
+        [ "--json", *scope_flags(arguments), "webhook", "setup", "--input-json", "-" ],
+        stdin_secret: Secret.new(url),
+        extra_secrets: extra
+      )
+      return tool_error(envelope.dig("error", "message") || "Setup failed.") unless envelope["ok"]
+
+      result = envelope["result"] || {}
+      {
+        "content" => [ { "type" => "text", "text" => setup_text(result) } ],
+        "structuredContent" => sanitize(result),
+        "isError" => false
+      }
+    end
+
+    def test(arguments)
+      rule_id = arguments["rule_id"].to_i
+      return tool_error("rule_id is required.") if rule_id < 1
+
+      envelope = @cli.run([ "--json", *scope_flags(arguments), "webhook", "test", rule_id.to_s ])
+      return tool_error(envelope.dig("error", "message") || "Test failed.") unless envelope["ok"]
+
+      delivery = sanitize(envelope.dig("result", "delivery") || {})
+      delivered = delivery["delivered"] == true
+      text = if delivered
+        "Webhook rule ##{delivery["rule_id"]} delivered (HTTP #{delivery["http_status"]})."
+      else
+        "Webhook rule ##{delivery["rule_id"]} did not deliver: #{delivery.dig("failure", "message") || "unknown error"}."
+      end
+
+      {
+        "content" => [ { "type" => "text", "text" => text } ],
+        "structuredContent" => { "delivery" => delivery },
+        "isError" => false
+      }
+    end
+
+    def list(arguments)
+      envelope = @cli.run([ "--json", *scope_flags(arguments), "webhooks" ])
+      return tool_error(envelope.dig("error", "message") || "List failed.") unless envelope["ok"]
+
+      webhooks = sanitize(envelope.dig("result", "webhooks") || [])
+      {
+        "content" => [ { "type" => "text", "text" => "Found #{webhooks.length} webhook rule(s)." } ],
+        "structuredContent" => { "webhooks" => webhooks },
+        "isError" => false
+      }
+    end
+
+    def setup_text(result)
+      rule = result["notification_rule"] || {}
+      verb = result["created"] ? "created" : "reused"
+      "Webhook rule ##{rule["id"]} #{verb} (#{rule["destination_masked"]})."
+    end
+
+    def scope_flags(arguments)
+      flags = []
+      flags += [ "--connection", arguments["connection"] ] if arguments["connection"].to_s != ""
+      flags += [ "--project", arguments["project"] ] if arguments["project"].to_s != ""
+      flags
+    end
+
+    def sanitize(value)
+      case value
+      when Array then value.map { |item| sanitize(item) }
+      when Hash
+        value.each_with_object({}) do |(key, item), acc|
+          next if %w[destination url headers webhook_headers].include?(key.to_s)
+
+          acc[key] = sanitize(item)
+        end
+      else
+        value
+      end
+    end
+
+    def tool_error(message)
+      {
+        "content" => [ { "type" => "text", "text" => message } ],
+        "isError" => true
+      }
+    end
+
+    def reply(id, result)
+      return if id.nil?
+
+      @output.puts(JSON.generate({ "jsonrpc" => "2.0", "id" => id, "result" => result }))
+    end
+
+    def reply_error(id, code, message)
+      @output.puts(JSON.generate({
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => { "code" => code, "message" => message }
+      }))
+    end
+  end
+end
+
+OopsieMcp::Server.new.run if $PROGRAM_NAME == __FILE__

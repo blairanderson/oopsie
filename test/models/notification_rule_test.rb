@@ -11,6 +11,16 @@ class NotificationRuleTest < ActiveSupport::TestCase
     assert rule.enabled?, "should default to enabled"
   end
 
+  test "masks webhook destinations" do
+    rule = NotificationRule.new(
+      project: projects(:myapp),
+      channel: :webhook,
+      destination: "https://hooks.example.com/secret/path?token=abc"
+    )
+
+    assert_equal "https://hooks.example.com/...", rule.destination_masked
+  end
+
   test "valid webhook rule" do
     rule = NotificationRule.new(
       project: projects(:myapp),

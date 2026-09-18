@@ -1,3 +1,8 @@
+## Instance
+
+The live Oopsie instance is https://oopsie.blair.biz
+Remote MCP: https://oopsie.blair.biz/mcp
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

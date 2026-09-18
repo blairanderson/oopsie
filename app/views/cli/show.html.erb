@@ -53,6 +53,9 @@ sudo mv oopsie /usr/local/bin/  # optional: add to PATH</code></pre>
       <tr><td><code>oopsie resolve &lt;id&gt;</code></td><td>Mark as resolved</td></tr>
       <tr><td><code>oopsie ignore &lt;id&gt;</code></td><td>Archive (ignore) an error group</td></tr>
       <tr><td><code>oopsie reopen &lt;id&gt;</code></td><td>Reopen a resolved or ignored error group</td></tr>
+      <tr><td><code>oopsie webhooks</code></td><td>List webhook notification rules (destinations masked)</td></tr>
+      <tr><td><code>oopsie webhook setup --input-json -</code></td><td>Create or reuse a webhook; secrets on stdin, never printed</td></tr>
+      <tr><td><code>oopsie webhook test &lt;id&gt;</code></td><td>Send a connectivity probe to a stored webhook</td></tr>
     </tbody>
   </table>
 </div>
@@ -66,6 +69,7 @@ sudo mv oopsie /usr/local/bin/  # optional: add to PATH</code></pre>
     <tbody>
       <tr><td><code>-p, --project &lt;name&gt;</code></td><td>Scope to a specific project for this command (overrides pinned default)</td></tr>
       <tr><td><code>-c, --connection &lt;name&gt;</code></td><td>Use a non-default connection</td></tr>
+      <tr><td><code>--json</code></td><td>Machine-readable envelope on webhook setup/test/list and <code>version</code></td></tr>
     </tbody>
   </table>
   <pre><code>oopsie errors --project myapp       # one-off override
@@ -105,9 +109,43 @@ oopsie config list</code></pre>
       <tr><td><code>PATCH</code></td><td><code>/api/v1/error_groups/:id/resolve</code></td><td>Mark resolved</td></tr>
       <tr><td><code>PATCH</code></td><td><code>/api/v1/error_groups/:id/ignore</code></td><td>Archive (ignore)</td></tr>
       <tr><td><code>PATCH</code></td><td><code>/api/v1/error_groups/:id/unresolve</code></td><td>Reopen</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/notification_rules</code></td><td>List notification rules (destinations masked)</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/notification_rules/setup_webhook</code></td><td>Idempotent webhook create</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/notification_rules/:id/test</code></td><td>Connectivity probe for a stored webhook</td></tr>
+      <tr><td><code>POST</code></td><td><code>/mcp</code></td><td>Remote MCP (Bearer API key) for ChatGPT and Grok</td></tr>
     </tbody>
   </table>
   <p class="text-secondary">All endpoints require <code>Authorization: Bearer YOUR_KEY</code>. Project keys can report exceptions and manage error groups for one project. User keys can list, create, rename, disable, and enable projects. When calling project-scoped endpoints with a User API Key, include <code>project_id</code> as a query param or <code>X-Project-Id</code> as a header.</p>
+</div>
+
+<div class="cli-section card">
+  <h2>Remote MCP (ChatGPT, Grok)</h2>
+  <p>Hosted clients cannot spawn <code>oopsie-mcp</code>. Point them at <code>https://your-oopsie-instance.com/mcp</code> with your User API key as a Bearer token. Pass <code>project</code> (name or id) on tool calls unless you authenticate with a project key.</p>
+  <pre><code># Grok CLI
+grok mcp add --transport http oopsie https://your-oopsie-instance.com/mcp \
+  --header "Authorization: Bearer ${OOPSIE_API_KEY}"
+
+# ChatGPT: Settings → Apps → Developer mode → Create
+# Connector URL: https://your-oopsie-instance.com/mcp
+# Auth: Token, paste your User API key from the Account page</code></pre>
+</div>
+
+<div class="cli-section card">
+  <h2>MCP</h2>
+  <p>Pair the CLI with <code>oopsie-mcp</code> so a local agent (Cursor, Claude Code) can set up and test webhooks over stdio. The adapter shells <code>oopsie --json</code>; it never returns destinations or header values.</p>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/theinventor/Oopsie/main/cli/oopsie-mcp -o oopsie-mcp
+chmod +x oopsie-mcp
+sudo mv oopsie-mcp /usr/local/bin/
+
+# Cursor / Claude Desktop mcp.json
+{
+  "mcpServers": {
+    "oopsie": {
+      "command": "oopsie-mcp",
+      "env": { "OOPSIE_BIN": "/usr/local/bin/oopsie" }
+    }
+  }
+}</code></pre>
 </div>
 
 <div class="cli-section card">

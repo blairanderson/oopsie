@@ -37,7 +37,14 @@ Rails.application.routes.draw do
       patch "projects/:id", to: "projects#update", as: :project_admin
       patch "projects/:id/disable", to: "projects#disable", as: :disable_project_admin
       patch "projects/:id/enable", to: "projects#enable", as: :enable_project_admin
-      resources :notification_rules, only: [ :index, :create ]
+      resources :notification_rules, only: [ :index, :create ] do
+        collection do
+          post :setup_webhook
+        end
+        member do
+          post :test
+        end
+      end
       resources :error_groups, only: [ :index, :show ] do
         member do
           patch :resolve
@@ -55,6 +62,7 @@ Rails.application.routes.draw do
   # Can be used by load balancers and uptime monitors to verify that the app is live.
   get "cli" => "cli#show", as: :cli
   get "skills" => "skills#show", as: :skills
+  match "/mcp", to: "mcp#handle", via: [ :get, :post, :delete ], as: :mcp
 
   get "up" => "rails/health#show", as: :rails_health_check
 

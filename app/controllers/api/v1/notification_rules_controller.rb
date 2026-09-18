@@ -30,6 +30,33 @@ module Api
         end
       end
 
+      def setup_webhook
+        result = WebhookRuleSetup.call(project: @project, attributes: webhook_setup_params)
+        unless result.ok?
+          render json: { error: "Validation failed", errors: result.errors }, status: :unprocessable_entity
+          return
+        end
+
+        render json: {
+          notification_rule: serialize_rule(result.rule),
+          created: result.created
+        }, status: result.created ? :created : :ok
+      end
+
+      def test
+        rule = @project.notification_rules.find(params[:id])
+        unless rule.webhook?
+          render json: {
+            error: "Validation failed",
+            errors: { channel: [ "must be webhook" ] }
+          }, status: :unprocessable_entity
+          return
+        end
+
+        result = WebhookTestProbe.call(project: @project, rule: rule)
+        render json: { delivery: serialize_delivery(rule, result) }
+      end
+
       private
 
       def notification_rule_params
@@ -39,11 +66,18 @@ module Api
         permitted
       end
 
+      def webhook_setup_params
+        permitted = params.require(:notification_rule).permit(:destination, :enabled, events: [], headers: {})
+        headers = permitted.delete(:headers)
+        permitted[:webhook_headers] = headers if headers
+        permitted
+      end
+
       def serialize_rule(rule)
         {
           id: rule.id,
           channel: rule.channel,
-          destination_masked: masked_destination(rule),
+          destination_masked: rule.destination_masked,
           headers_configured: rule.webhook? && rule.webhook_headers.present?,
           events: rule.events,
           enabled: rule.enabled,
@@ -52,28 +86,14 @@ module Api
         }
       end
 
-      def masked_destination(rule)
-        if rule.webhook?
-          mask_webhook_url(rule.destination)
-        else
-          mask_email(rule.destination)
-        end
-      end
-
-      def mask_webhook_url(destination)
-        uri = URI.parse(destination)
-        return "[masked]" unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
-
-        "#{uri.scheme}://#{uri.host}/..."
-      rescue URI::InvalidURIError
-        "[masked]"
-      end
-
-      def mask_email(destination)
-        local, domain = destination.to_s.split("@", 2)
-        return "[masked]" if local.blank? || domain.blank?
-
-        "#{local.first}***@#{domain}"
+      def serialize_delivery(rule, result)
+        {
+          rule_id: rule.id,
+          delivered: result.delivered,
+          http_status: result.http_status,
+          payload_kind: WebhookTestProbe::PAYLOAD_KIND,
+          failure: result.failure
+        }
       end
     end
   end
