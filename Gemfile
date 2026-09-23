@@ -6,6 +6,9 @@ gem "rails", "~> 8.1.3", ">= 8.1.3.1"
 gem "propshaft"
 # Use sqlite3 as the database for Active Record
 gem "sqlite3", ">= 2.1"
+# Request profiler with SQL timing and flamegraphs.
+gem "rack-mini-profiler"
+gem "stackprof"
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
 # Use JavaScript with ESM import maps [https://github.com/rails/importmap-rails]
