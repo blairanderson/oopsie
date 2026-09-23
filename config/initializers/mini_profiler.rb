@@ -8,7 +8,10 @@ if defined?(Rack::MiniProfiler)
   require "fileutils"
   if Rails.env.production?
     Rack::MiniProfiler.config.authorization_mode = :allow_authorized
-    Rack::MiniProfiler.config.snapshot_every_n_requests = 5
+    # FileStore has no snapshot support. Keep snapshots off.
+    # Only MemoryStore and RedisStore support snapshots.
+    # Direct profiling still works for logged-in users.
+    Rack::MiniProfiler.config.snapshot_every_n_requests = -1
     prod_path = File.expand_path("~/oopsie/shared/miniprofiler")
     FileUtils.mkdir_p(prod_path)
     Rack::MiniProfiler.config.storage_options = { path: prod_path }
