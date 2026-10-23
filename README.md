@@ -35,7 +35,7 @@ Visit [http://localhost:3000](http://localhost:3000) and log in with the credent
 
 ## Stack
 
-- Ruby 4.0.2 / Rails 8.1
+- Ruby 4.0.9 / Rails 8.1
 - SQLite (WAL mode)
 - Solid Queue (background jobs)
 - Propshaft (assets)
@@ -473,7 +473,7 @@ fly deploy
 ### Any VPS (Ubuntu 24.04+)
 
 ```bash
-# Install Ruby 4.0.2, bundler, SQLite, and libvips 8.13+
+# Install Ruby 4.0.9, bundler, SQLite, and libvips 8.13+
 git clone https://github.com/theinventor/Oopsie.git
 cd Oopsie
 sudo apt-get update && sudo apt-get install --no-install-recommends -y libvips-dev libvips-tools sqlite3
