@@ -203,4 +203,55 @@ class NotificationRulesControllerTest < ActionDispatch::IntegrationTest
     assert_select "input[name='notification_rule[webhook_header_name]']"
     assert_select "input[name='notification_rule[webhook_header_value]']"
   end
+
+  test "notification form accepts its CSRF token for create update and test submissions" do
+    original_forgery_protection = ActionController::Base.allow_forgery_protection
+    ActionController::Base.allow_forgery_protection = true
+
+    begin
+      get settings_project_url(@project)
+      form = css_select("form.card.form-card").sole
+      token = form.at_css("input[name='authenticity_token']")["value"]
+      create_button = form.css("button[type='submit']").first
+
+      assert_difference "NotificationRule.count", 1 do
+        post create_button["formaction"], params: {
+          authenticity_token: token,
+          notification_rule: { channel: "email", destination: "csrf@example.com" }
+        }
+      end
+      assert_redirected_to settings_project_path(@project)
+
+      get edit_project_notification_rule_url(@project, @rule)
+      form = css_select("form.card.form-card").sole
+      token = form.at_css("input[name='authenticity_token']")["value"]
+      update_button = form.css("button[type='submit']").first
+
+      post update_button["formaction"], params: {
+        authenticity_token: token,
+        update_button["name"] => update_button["value"],
+        notification_rule: { destination: "csrf-updated@example.com" }
+      }
+      assert_redirected_to settings_project_path(@project)
+      assert_equal "csrf-updated@example.com", @rule.reload.destination
+
+      assert_emails 1 do
+        post form["action"], params: {
+          authenticity_token: token,
+          notification_rule: { channel: "email", destination: "csrf-test@example.com" }
+        }
+      end
+      assert_redirected_to settings_project_path(@project)
+
+      assert_no_difference "NotificationRule.count" do
+        post create_button["formaction"], params: {
+          authenticity_token: "invalid-token",
+          notification_rule: { channel: "email", destination: "forged@example.com" }
+        }
+      end
+      assert_response :unprocessable_entity
+    ensure
+      ActionController::Base.allow_forgery_protection = original_forgery_protection
+    end
+  end
 end
