@@ -9,7 +9,7 @@
 
 # Make sure RUBY_VERSION matches the Ruby version in .ruby-version.
 # Keep RUBY_DISTRO on trixie so apt installs the maintained libvips 8.16 package set.
-ARG RUBY_VERSION=4.0.2
+ARG RUBY_VERSION=4.0.9
 ARG RUBY_DISTRO=slim-trixie
 FROM docker.io/library/ruby:${RUBY_VERSION}-${RUBY_DISTRO} AS base
 

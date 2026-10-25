@@ -1,5 +1,5 @@
 {
-  "setup": "source \"$HOME/.rvm/scripts/rvm\" && rvm install ruby-4.0.2 2>/dev/null; rvm use ruby-4.0.2@ruby-4.0.2 && bundle install && rails db:create db:migrate db:test:prepare 2>/dev/null; true",
-  "run": "source \"$HOME/.rvm/scripts/rvm\" && rvm use ruby-4.0.2@ruby-4.0.2 && bin/dev",
-  "archive": "source \"$HOME/.rvm/scripts/rvm\" && rvm use ruby-4.0.2@ruby-4.0.2 2>/dev/null && rails db:drop 2>/dev/null; true"
+  "setup": "source \"$HOME/.rvm/scripts/rvm\" && rvm install ruby-4.0.9 2>/dev/null; rvm use ruby-4.0.9@ruby-4.0.9 && bundle install && rails db:create db:migrate db:test:prepare 2>/dev/null; true",
+  "run": "source \"$HOME/.rvm/scripts/rvm\" && rvm use ruby-4.0.9@ruby-4.0.9 && bin/dev",
+  "archive": "source \"$HOME/.rvm/scripts/rvm\" && rvm use ruby-4.0.9@ruby-4.0.9 2>/dev/null && rails db:drop 2>/dev/null; true"
 }
